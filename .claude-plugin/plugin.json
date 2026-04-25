@@ -1,0 +1,11 @@
+{
+  "name": "sso-rules",
+  "description": "Devstack invariants for apps behind oauth2-proxy + Traefik ForwardAuth (Plane, Outline, Penpot, SurfSense). Enforces SSO chain, bypass routers, build patterns, logout shape, session TTL, and compose hygiene.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Awais Qureshi",
+    "url": "https://github.com/awais786"
+  },
+  "homepage": "https://github.com/awais786/sso-rules",
+  "license": "MIT"
+}

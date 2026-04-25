@@ -1,0 +1,17 @@
+{
+  "name": "sso-rules-marketplace",
+  "description": "Marketplace for the sso-rules plugin — devstack invariants for apps behind oauth2-proxy + Traefik ForwardAuth.",
+  "owner": {
+    "name": "Awais Qureshi",
+    "url": "https://github.com/awais786"
+  },
+  "plugins": [
+    {
+      "name": "sso-rules",
+      "source": "./",
+      "description": "Devstack invariants for apps behind oauth2-proxy + Traefik ForwardAuth (Plane, Outline, Penpot, SurfSense). Enforces SSO chain, bypass routers, build patterns, logout shape, session TTL, and compose hygiene.",
+      "version": "0.1.0",
+      "category": "devops"
+    }
+  ]
+}
