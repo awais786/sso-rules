@@ -44,7 +44,7 @@ After install:
 ## Files
 
 ```
-sso-rules-plugin/
+sso-rules/
 ├── .claude-plugin/plugin.json     # plugin manifest
 ├── marketplace.json                # marketplace listing
 ├── skills/
