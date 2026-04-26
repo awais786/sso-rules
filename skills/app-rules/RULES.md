@@ -14,7 +14,14 @@ These rules apply to **every** app. No exceptions without a written tradeoff in 
 
 ### SSO chain
 - Every protected `-secure` Traefik router **MUST** carry `strip-auth-headers@docker, mpass-auth@docker` middlewares, in that order. Strip first; otherwise inbound `X-Auth-Request-*` is trusted before being scrubbed.
-- Every backend reads identity from `X-Auth-Request-Email` (primary) → `X-Auth-Request-User` (fallback). If neither contains `@`, synthesize `{user}@${DEFAULT_EMAIL_DOMAIN}` (env var, defaults to `askii.ai`). Reject the request only if both are empty. **Email synthesis is universal** — every backend that accepts bare-username Cognito pools needs it; missing synthesis (Penpot today) breaks first-login. The same `DEFAULT_EMAIL_DOMAIN` env **MUST** be set on every app container so synthesis is consistent across the stack.
+- Every backend reads identity from `X-Auth-Request-Email` (primary) → `X-Auth-Request-User` (fallback). If neither contains `@`, synthesize `{user}@${DEFAULT_EMAIL_DOMAIN}`. Reject the request only if both are empty.
+  - **Canonical pattern** (Python apps — Plane, SurfSense):
+    ```python
+    DEFAULT_EMAIL_DOMAIN = os.getenv("DEFAULT_EMAIL_DOMAIN", "askii.ai")
+    ```
+    Equivalent in Node (Outline) / Clojure (Penpot) — same env var name, same default.
+  - **Email synthesis is universal** — every backend that accepts bare-username Cognito pools needs it; missing synthesis (Penpot today) breaks first-login.
+  - The same `DEFAULT_EMAIL_DOMAIN` env **MUST** be set on every app container so synthesis stays consistent across the stack — otherwise the same Cognito user gets `user@askii.ai` from one app and `user@somewhere-else.com` from another → two distinct user rows, two profiles, broken cross-app handoff.
 - Every backend port is **internal-only**. Never publish backend ports on the host (`ports: ["8000:8000"]` is forbidden); access is exclusively through Traefik. Without that, `strip-auth-headers` is bypassable.
 - Every app **MUST** set `AUTH_TYPE=SSO` env on its container (and the equivalent `NEXT_PUBLIC_*_AUTH_TYPE=SSO` on split-process frontends). This is the **header-trust gate** — backend / SPA must refuse to act on `X-Auth-Request-*` unless the gate is set. Without it, a misconfigured local dev or staging deploy silently trusts spoofed headers. The SPA must also hide local login/register/forgot-password UI when SSO is set.
 
