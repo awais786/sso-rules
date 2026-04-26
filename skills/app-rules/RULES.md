@@ -20,7 +20,7 @@ These rules apply to **every** app. No exceptions without a written tradeoff in 
     DEFAULT_EMAIL_DOMAIN = os.getenv("DEFAULT_EMAIL_DOMAIN", "askii.ai")
     ```
     Equivalent in Node (Outline) / Clojure (Penpot) — same env var name, same default.
-  - **Email synthesis is universal** — every backend that accepts bare-username Cognito pools needs it; missing synthesis (Penpot today) breaks first-login.
+  - **Email synthesis is universal** — every backend that accepts bare-username Cognito pools needs it. **Current ground truth (verified by source grep):** Plane ✅, SurfSense ✅, Outline ⚠️ uses legacy `SMB_NAME`-based synthesis (pending migration), Penpot ❌ no synthesis at all. Migrating Outline + Penpot to `DEFAULT_EMAIL_DOMAIN` is the path to consistency.
   - The same `DEFAULT_EMAIL_DOMAIN` env **MUST** be set on every app container so synthesis stays consistent across the stack — otherwise the same Cognito user gets `user@askii.ai` from one app and `user@somewhere-else.com` from another → two distinct user rows, two profiles, broken cross-app handoff.
 - Every backend port is **internal-only**. Never publish backend ports on the host (`ports: ["8000:8000"]` is forbidden); access is exclusively through Traefik. Without that, `strip-auth-headers` is bypassable.
 - Every app **MUST** set `AUTH_TYPE=SSO` env on its container (and the equivalent `NEXT_PUBLIC_*_AUTH_TYPE=SSO` on split-process frontends). This is the **header-trust gate** — backend / SPA must refuse to act on `X-Auth-Request-*` unless the gate is set. Without it, a misconfigured local dev or staging deploy silently trusts spoofed headers. The SPA must also hide local login/register/forgot-password UI when SSO is set.
@@ -114,7 +114,7 @@ When Valkey is recreated, Compose restarts the dependent. Without this, oauth2-p
 | TTL env consumed | `SESSION_COOKIE_AGE` (Django) | ⚠️ hardcoded `addMonths(3)` | `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE` | `ACCESS_TOKEN_LIFETIME_SECONDS` + refresh |
 | Bypass paths | `/god-mode`, `/api/instances`, `/_next/static`, `/static/` | `/api/hooks`, `/_next/static` | `/js/`, `/css/`, `/images/`, `/fonts/` | `/health`, `/docs`, `/openapi.json`, `/_next/static`, `/zero` |
 | SSO integration shape | Django middleware (unified process) | Inside `authentication.ts` middleware (unified) | Reitit RPC middleware (unified) | Cookie handoff at `/auth/jwt/proxy-login` (split FE/BE) |
-| Email synthesis from username | ✅ `proxy_auth.py` | ✅ `authentication.ts` | ❌ pending — bare username fails validation | ✅ `proxy_auth.py` |
+| Email synthesis from username | ✅ `DEFAULT_EMAIL_DOMAIN` in `proxy_auth.py` (default `askii.ai`) | ⚠️ uses old `SMB_NAME`-based synthesis (`{user}@${SMB_NAME}.com`) at `authentication.ts:300` — pending migration to `DEFAULT_EMAIL_DOMAIN` | ❌ no synthesis — bare username fails validation | ✅ `DEFAULT_EMAIL_DOMAIN` in `config/__init__.py` + `proxy_auth.py` (default `askii.ai`) |
 
 ⚠️ = known issue, see `docs/known-issues.md`.
 
