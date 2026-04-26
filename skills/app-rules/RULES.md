@@ -14,9 +14,9 @@ These rules apply to **every** app. No exceptions without a written tradeoff in 
 
 ### SSO chain
 - Every protected `-secure` Traefik router **MUST** carry `strip-auth-headers@docker, mpass-auth@docker` middlewares, in that order. Strip first; otherwise inbound `X-Auth-Request-*` is trusted before being scrubbed.
-- Every backend reads identity from `X-Auth-Request-Email` (primary) → `X-Auth-Request-User` (fallback). If neither contains `@`, synthesize `{user}@${SMB_NAME}.com`. Reject the request only if both are empty.
+- Every backend reads identity from `X-Auth-Request-Email` (primary) → `X-Auth-Request-User` (fallback). If neither contains `@`, synthesize `{user}@${DEFAULT_EMAIL_DOMAIN}` (env var, defaults to `askii.ai`). Reject the request only if both are empty. **Email synthesis is universal** — every backend that accepts bare-username Cognito pools needs it; missing synthesis (Penpot today) breaks first-login. The same `DEFAULT_EMAIL_DOMAIN` env **MUST** be set on every app container so synthesis is consistent across the stack.
 - Every backend port is **internal-only**. Never publish backend ports on the host (`ports: ["8000:8000"]` is forbidden); access is exclusively through Traefik. Without that, `strip-auth-headers` is bypassable.
-- Every app sets `AUTH_TYPE=SSO` env (consistency gate). At minimum, the SPA build/runtime must hide local login/register/forgot-password UI when this is set.
+- Every app **MUST** set `AUTH_TYPE=SSO` env on its container (and the equivalent `NEXT_PUBLIC_*_AUTH_TYPE=SSO` on split-process frontends). This is the **header-trust gate** — backend / SPA must refuse to act on `X-Auth-Request-*` unless the gate is set. Without it, a misconfigured local dev or staging deploy silently trusts spoofed headers. The SPA must also hide local login/register/forgot-password UI when SSO is set.
 
 ### Bypass discipline
 - Bypass routers (no `mpass-auth`) get `priority=20` (or higher). Secure catch-all routers stay at `priority=1-10`.
@@ -24,7 +24,7 @@ These rules apply to **every** app. No exceptions without a written tradeoff in 
   - Static assets (`/_next/static`, `/static/`, `/js/`, `/css/`, `/images/`, `/fonts/`)
   - Health/docs (`/health`, `/docs`, `/openapi.json`)
   - Webhooks with their own token auth (`/api/hooks`)
-  - Admin bootstrap endpoints isolated from normal users (`/god-mode`)
+  - **Admin bootstrap endpoints isolated from normal users** (`/god-mode` for Plane; the principle is "separate session universe, not reachable from the main app shell" — apps may use different paths)
   - Out-of-band sync protocols with their own auth (`/zero` — bearer token)
 - **Never** bypass for routes returning user data or accepting mutations. If unsure, default to secure.
 
@@ -36,10 +36,12 @@ These rules apply to **every** app. No exceptions without a written tradeoff in 
 Every fork is one of:
 - **Pattern A (interpreted):** Pull official image. Volume-mount fork source. Edit → restart service → live.
   - Restart shape: `COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml docker compose restart <svc> --no-deps`
-- **Pattern B (compiled):** Build image once with **placeholder tokens** (`__NEXT_PUBLIC_FOO__`), entrypoint script substitutes real values from env at startup. Rebuild image on source change.
+- **Pattern B (compiled):** Build image once. Two sub-patterns for getting env values into the bundle:
+  - **B1 — build-arg injection:** values baked at `docker build` time via Dockerfile `ARG` + `ENV`. Immutable per image. Plane Vite frontend uses this. Changing a value = rebuild.
+  - **B2 — runtime placeholder substitution:** bake **placeholder tokens** (`__NEXT_PUBLIC_FOO__`) into the bundle, entrypoint script (e.g., `docker-entrypoint.js`, `nginx-entrypoint.sh`) substitutes real env values on container start. Same image, different deploys; changing a value = recreate container, no rebuild. SurfSense Next.js + Penpot nginx use this.
   - Build shape: `make dev.build.<app>.<component>` then recreate via `dev.restart.<app>`.
 
-Pick before writing the Dockerfile. Don't volume-mount source into a Pattern B container — values were baked at build, mounting source has zero effect.
+Pick A vs B (and B1 vs B2) before writing the Dockerfile. Don't volume-mount source into a Pattern B container — values were baked at build, mounting source has zero effect. Don't bake real values into a B2 image — terser will dead-code-eliminate placeholder branches if it sees them as falsy literals.
 
 ### Session TTL
 - Two canonical env vars in `.env`, kept aligned:
@@ -120,8 +122,9 @@ When Valkey is recreated, Compose restarts the dependent. Without this, oauth2-p
 - Split process: Next.js frontend can't read `X-Auth-Request-Email` directly. Cookie handoff pattern at `/auth/jwt/proxy-login` issues a JWT, sets short-lived cookies (60s TTL), redirects to `/`. Frontend `(home)/page.tsx` reads cookies, stores JWT in localStorage.
 - Alembic chain in fork **MUST** stay synced with upstream MODSetter/SurfSense. Drift → backend crash-loops with `Can't locate revision`. Fix: pull missing revisions from `real-upstream/main`. See CLAUDE.md.
 - HuggingFace model + ffmpeg downloads on cold start (~5-10 min). Persisted by `surfsense-hf-cache` named volume.
-- Streaming/SSE calls **MUST** use `authenticatedFetch`, not raw `fetch()`, or 401-on-token-expiry hangs the stream.
+- Streaming/SSE calls **MUST** use `authenticatedFetch`, not raw `fetch()`. Raw fetch bypasses the 401 wrapper — when JWT expires mid-stream the connection neither closes nor re-auths and the chat hangs silently. Affects `new-chat/page.tsx` and any future streaming surface.
 - Zero cache replicas (port 4848) need their own replication slot on Postgres. Wiping the DB requires dropping the slot first (`SELECT pg_drop_replication_slot(...)`), then the volume `foss-devstack_surfsense-zero-cache-data`.
+- Frontend uses Pattern B2 — env vars injected at startup by `docker-entrypoint.js`. Don't bake real `NEXT_PUBLIC_*` values via build-args; terser will dead-code-eliminate placeholder branches.
 
 **Penpot**
 - No dedicated SSO route — Reitit RPC middleware reads `X-Auth-Request-Email` as fallback (after session + access-token). Auto-provisions when `enable-x-auth-request-auto-register` is set in `PENPOT_FLAGS`.
@@ -157,7 +160,9 @@ When introducing a 5th (or Nth) app, work through this list. Each item is requir
 9. **Hide local auth UI.** Login/register/forgot-password/email-change/password-change. SSO mode owns identity.
 10. **Smoke test.** Add `docs/<name>-smoke-test.md` covering: SSO redirect, JWT/session issuance, app-API call with `X-Auth-Request-Email`, logout → portal, re-auth round-trip.
 
-If the app is split frontend/backend (like SurfSense), expect to add a JWT cookie handoff step. If unified process (like Plane/Outline/Penpot), the middleware can read the header directly.
+If the app is split frontend/backend (like SurfSense), expect to add a **JWT cookie handoff step**: dedicated backend endpoint (e.g., `/auth/jwt/proxy-login`) reads `X-Auth-Request-Email`, issues JWT + refresh as **short-lived cookies (60s TTL)**, 302 → `/`. Frontend root reads cookies, stores JWT in localStorage / client state, clears cookies, navigates to `/dashboard`. No `/auth/callback` route — keeps Traefik routing simple.
+
+If unified process (like Plane/Outline/Penpot), the middleware can read the header directly.
 
 ---
 
@@ -175,6 +180,8 @@ Symptoms and first-check (full table in CLAUDE.md):
 | Logout lands on wrong host | Hostname regex wrong for non-`foss-*` deployments — tighten to `^foss-[^.]+\.` |
 | `tls.certresolver=letsencrypt` errors | Remove — devstack uses mkcert |
 | All apps down | oauth2-proxy crash-looping (DNS to Cognito OIDC discovery) |
+| Streaming chat / SSE hangs after token TTL | Frontend using raw `fetch()` instead of `authenticatedFetch` — stream never closes when JWT expires |
+| App accepts `X-Auth-Request-Email` but not from oauth2-proxy | `AUTH_TYPE=SSO` env not set on the container — header-trust gate disabled |
 
 ---
 
