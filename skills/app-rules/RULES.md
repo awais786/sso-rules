@@ -53,19 +53,19 @@ Pick A vs B (and B1 vs B2) before writing the Dockerfile. Don't volume-mount sou
 ### Session TTL
 - Four canonical env vars in `.env`, two pairs (seconds + duration), one for the access cookie and one for the refresh token. Apps wire whichever shape their native config takes:
   ```
-  SESSION_COOKIE_MAX_AGE_SECONDS=604800              # 7d — access cookie / app session, seconds
-  SESSION_COOKIE_MAX_AGE_DURATION=7d                 # same window, duration string
+  SESSION_TTL_SECONDS=28800            # 8h — access cookie / app session, seconds
+  SESSION_TTL_DURATION=8h              # same window, duration string
 
-  SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS=1209600      # 14d — refresh token, seconds (must be >= access)
-  SESSION_REFRESH_TOKEN_MAX_AGE_DURATION=14d         # same window, duration string
+  SESSION_REFRESH_TTL_SECONDS=57600    # 16h — refresh token, seconds (must be >= access)
+  SESSION_REFRESH_TTL_DURATION=16h     # same window, duration string
   ```
 - Every session-issuing app **MUST** wire one of these into its native config — verified ground truth in `docker-compose.yml`:
-  - **Plane (Django):** `SESSION_COOKIE_AGE = ${SESSION_COOKIE_MAX_AGE_SECONDS}`
-  - **SurfSense (FastAPI):** `ACCESS_TOKEN_LIFETIME_SECONDS = ${SESSION_COOKIE_MAX_AGE_SECONDS}`, `REFRESH_TOKEN_LIFETIME_SECONDS = ${SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS}`
-  - **Penpot:** `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE = ${SESSION_COOKIE_MAX_AGE_SECONDS}s`
-  - **oauth2-proxy:** `OAUTH2_PROXY_COOKIE_EXPIRE = ${SESSION_COOKIE_MAX_AGE_SECONDS}s`
-  - **Twenty (NestJS):** `ACCESS_TOKEN_EXPIRES_IN = ${SESSION_COOKIE_MAX_AGE_DURATION}`, `REFRESH_TOKEN_EXPIRES_IN = ${SESSION_REFRESH_TOKEN_MAX_AGE_DURATION}` — also drives the SSO cookie maxAge (refresh, not access).
-- Apps that hardcode TTL (Outline currently — `addMonths(new Date(), 3)`) need a fork patch tracked in `docs/known-issues.md`.
+  - **Plane (Django):** `SESSION_COOKIE_AGE = ${SESSION_TTL_SECONDS}`
+  - **SurfSense (FastAPI):** `ACCESS_TOKEN_LIFETIME_SECONDS = ${SESSION_TTL_SECONDS}`, `REFRESH_TOKEN_LIFETIME_SECONDS = ${SESSION_REFRESH_TTL_SECONDS}`
+  - **Penpot:** `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE = ${SESSION_TTL_SECONDS}s`
+  - **oauth2-proxy:** `OAUTH2_PROXY_COOKIE_EXPIRE = ${SESSION_TTL_SECONDS}s`
+  - **Twenty (NestJS):** `ACCESS_TOKEN_EXPIRES_IN = ${SESSION_TTL_DURATION}`, `REFRESH_TOKEN_EXPIRES_IN = ${SESSION_REFRESH_TTL_DURATION}` — also drives the SSO cookie maxAge (refresh, not access).
+- Apps that hardcode TTL (Outline currently — `addMonths(new Date(), 3)` in `app/middlewares/authentication.ts:59`) need a fork patch reading `SESSION_TTL_SECONDS`. Tracked in `docs/known-issues.md`.
 
 ### Logout
 - Every SPA logout: clear app session (server-side endpoint) → clear client state (localStorage, mobx, IndexedDB) → top-level navigate to portal host:
@@ -119,7 +119,7 @@ When Valkey is recreated, Compose restarts the dependent. Without this, oauth2-p
 | Frontend image | `foss-devstack/plane-web:dev` | (same as backend) | `foss-devstack/penpot-frontend:dev` | `ghcr.io/pressingly/surfsense-web:latest` | (same as backend) |
 | Fork branch (SSO) | `main` (foss-main) | `sso-auth` | `implement-sso-v2` | `foss-main` | `sso-auth` |
 | 1-layer logout file | `apps/web/core/store/user/index.ts` | `app/stores/AuthStore.ts` + `app/scenes/Logout.tsx` | `frontend/src/app/main/data/auth.cljs` | `surfsense_web/lib/auth-utils.ts` | `packages/twenty-front/src/modules/auth/hooks/useAuth.ts` |
-| TTL env consumed | `SESSION_COOKIE_AGE` (Django) | ⚠️ hardcoded `addMonths(3)` | `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE` | `ACCESS_TOKEN_LIFETIME_SECONDS` + refresh | `ACCESS_TOKEN_EXPIRES_IN` + `REFRESH_TOKEN_EXPIRES_IN` (cookie maxAge tracks **refresh**) |
+| TTL env consumed | `SESSION_COOKIE_AGE` ← `SESSION_TTL_SECONDS` | ⚠️ hardcoded `addMonths(3)` (fork patch pending) | `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE` ← `SESSION_TTL_SECONDS` | `ACCESS_TOKEN_LIFETIME_SECONDS` + `REFRESH_TOKEN_LIFETIME_SECONDS` ← `SESSION_TTL_SECONDS` / `SESSION_REFRESH_TTL_SECONDS` | `ACCESS_TOKEN_EXPIRES_IN` ← `SESSION_TTL_DURATION`; `REFRESH_TOKEN_EXPIRES_IN` ← `SESSION_REFRESH_TTL_DURATION` (cookie maxAge tracks **refresh**) |
 | Bypass paths | `/god-mode`, `/api/instances`, `/_next/static`, `/static/` | `/api/hooks`, `/_next/static` | `/js/`, `/css/`, `/images/`, `/fonts/` | `/health`, `/docs`, `/openapi.json`, `/_next/static`, `/zero` | `/static/`, `/assets/`, `Path(/favicon.ico)` |
 | SSO integration shape | Django middleware (unified process) | Inside `authentication.ts` middleware (unified) | Reitit RPC middleware (unified) | Cookie handoff at `/auth/jwt/proxy-login` (split FE/BE) | Standalone NestJS controller `GET /auth/sso/proxy-login` (unified) — sets `tokenPair` cookie consumed by Jotai, no Passport ceremony |
 | Email synthesis from username | ✅ `DEFAULT_EMAIL_DOMAIN` at `apps/api/plane/settings/common.py:64` + `proxy_auth.py:66,70` | ✅ `DEFAULT_EMAIL_DOMAIN` at `server/env.ts:537` + `authentication.ts:319` | ✅ `DEFAULT_EMAIL_DOMAIN` (env → `:default-email-domain` config key) at `auth_request.clj:47` | ✅ `DEFAULT_EMAIL_DOMAIN` at `config/__init__.py:321` + `proxy_auth.py:90,94` | ✅ `DEFAULT_EMAIL_DOMAIN` at `sso-proxy-login.controller.ts:resolveEmail` — rejects when env unset (no silent `user@undefined`) |
