@@ -1,7 +1,7 @@
 # App Rules — devstack invariants for every app behind ForwardAuth
 
 Canonical rules every app in this devstack must follow. Applies to:
-- Existing apps: **Plane**, **Outline**, **Penpot**, **SurfSense**
+- Existing apps: **Plane**, **Outline**, **Penpot**, **SurfSense**, **Twenty**
 - Any future app added behind oauth2-proxy + Traefik ForwardAuth
 
 When editing `docker-compose.yml`, `traefik/`, or any fork repo, this doc is the contract. Violations break the SSO chain.
@@ -51,12 +51,20 @@ Every fork is one of:
 Pick A vs B (and B1 vs B2) before writing the Dockerfile. Don't volume-mount source into a Pattern B container — values were baked at build, mounting source has zero effect. Don't bake real values into a B2 image — terser will dead-code-eliminate placeholder branches if it sees them as falsy literals.
 
 ### Session TTL
-- Two canonical env vars in `.env`, kept aligned:
+- Four canonical env vars in `.env`, two pairs (seconds + duration), one for the access cookie and one for the refresh token. Apps wire whichever shape their native config takes:
   ```
-  SESSION_TTL_SECONDS=28800   # 8h, for apps reading seconds
-  SESSION_TTL_DURATION=8h     # same, for apps reading duration strings
+  SESSION_COOKIE_MAX_AGE_SECONDS=604800              # 7d — access cookie / app session, seconds
+  SESSION_COOKIE_MAX_AGE_DURATION=7d                 # same window, duration string
+
+  SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS=1209600      # 14d — refresh token, seconds (must be >= access)
+  SESSION_REFRESH_TOKEN_MAX_AGE_DURATION=14d         # same window, duration string
   ```
-- Every session-issuing app **MUST** wire one of these into its native config (Django `SESSION_COOKIE_AGE`, Penpot `:auth-token-cookie-max-age`, oauth2-proxy `OAUTH2_PROXY_COOKIE_EXPIRE`, FastAPI `ACCESS_TOKEN_LIFETIME_SECONDS`).
+- Every session-issuing app **MUST** wire one of these into its native config — verified ground truth in `docker-compose.yml`:
+  - **Plane (Django):** `SESSION_COOKIE_AGE = ${SESSION_COOKIE_MAX_AGE_SECONDS}`
+  - **SurfSense (FastAPI):** `ACCESS_TOKEN_LIFETIME_SECONDS = ${SESSION_COOKIE_MAX_AGE_SECONDS}`, `REFRESH_TOKEN_LIFETIME_SECONDS = ${SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS}`
+  - **Penpot:** `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE = ${SESSION_COOKIE_MAX_AGE_SECONDS}s`
+  - **oauth2-proxy:** `OAUTH2_PROXY_COOKIE_EXPIRE = ${SESSION_COOKIE_MAX_AGE_SECONDS}s`
+  - **Twenty (NestJS):** `ACCESS_TOKEN_EXPIRES_IN = ${SESSION_COOKIE_MAX_AGE_DURATION}`, `REFRESH_TOKEN_EXPIRES_IN = ${SESSION_REFRESH_TOKEN_MAX_AGE_DURATION}` — also drives the SSO cookie maxAge (refresh, not access).
 - Apps that hardcode TTL (Outline currently — `addMonths(new Date(), 3)`) need a fork patch tracked in `docs/known-issues.md`.
 
 ### Logout
@@ -102,19 +110,19 @@ When Valkey is recreated, Compose restarts the dependent. Without this, oauth2-p
 
 ## 2. App matrix (current state)
 
-| Field | Plane | Outline | Penpot | SurfSense |
-|-------|-------|---------|--------|-----------|
-| Subdomain | `foss-pm` | `foss-docs` | `foss-design` | `foss-research` |
-| Build pattern (backend) | A — Python/Django | B — Node compiled | B — Clojure uberjar | A — Python/FastAPI |
-| Build pattern (frontend) | B — Vite baked | (single image) | B — ClojureScript | B — Next.js placeholder tokens |
-| Backend image | `ghcr.io/pressingly/plane-backend:v1.2.3-sso` | `foss-devstack/outline:dev` | `foss-devstack/penpot-backend:dev` | `ghcr.io/pressingly/surfsense-backend:latest` |
-| Frontend image | `foss-devstack/plane-web:dev` | (same as backend) | `foss-devstack/penpot-frontend:dev` | `ghcr.io/pressingly/surfsense-web:latest` |
-| Fork branch (SSO) | `main` (foss-main) | `sso-auth` | `implement-sso-v2` | `foss-main` |
-| 1-layer logout file | `apps/web/core/store/user/index.ts` | `app/stores/AuthStore.ts` + `app/scenes/Logout.tsx` | `frontend/src/app/main/data/auth.cljs` | `surfsense_web/lib/auth-utils.ts` |
-| TTL env consumed | `SESSION_COOKIE_AGE` (Django) | ⚠️ hardcoded `addMonths(3)` | `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE` | `ACCESS_TOKEN_LIFETIME_SECONDS` + refresh |
-| Bypass paths | `/god-mode`, `/api/instances`, `/_next/static`, `/static/` | `/api/hooks`, `/_next/static` | `/js/`, `/css/`, `/images/`, `/fonts/` | `/health`, `/docs`, `/openapi.json`, `/_next/static`, `/zero` |
-| SSO integration shape | Django middleware (unified process) | Inside `authentication.ts` middleware (unified) | Reitit RPC middleware (unified) | Cookie handoff at `/auth/jwt/proxy-login` (split FE/BE) |
-| Email synthesis from username | ✅ `DEFAULT_EMAIL_DOMAIN` at `apps/api/plane/settings/common.py:64` + `proxy_auth.py:66,70` | ✅ `DEFAULT_EMAIL_DOMAIN` at `server/env.ts:537` + `authentication.ts:319` | ✅ `DEFAULT_EMAIL_DOMAIN` (env → `:default-email-domain` config key) at `auth_request.clj:47` | ✅ `DEFAULT_EMAIL_DOMAIN` at `config/__init__.py:321` + `proxy_auth.py:90,94` |
+| Field | Plane | Outline | Penpot | SurfSense | Twenty |
+|-------|-------|---------|--------|-----------|--------|
+| Subdomain | `foss-pm` | `foss-docs` | `foss-design` | `foss-research` | `foss-twenty` |
+| Build pattern (backend) | A — Python/Django | B — Node compiled | B — Clojure uberjar | A — Python/FastAPI | B — NestJS unified image |
+| Build pattern (frontend) | B — Vite baked | (single image) | B — ClojureScript | B — Next.js placeholder tokens | B2 — `window._env_` runtime injection (`generateFrontConfig`) |
+| Backend image | `ghcr.io/pressingly/plane-backend:v1.2.3-sso` | `foss-devstack/outline:dev` | `foss-devstack/penpot-backend:dev` | `ghcr.io/pressingly/surfsense-backend:latest` | `foss-devstack/twenty:dev` |
+| Frontend image | `foss-devstack/plane-web:dev` | (same as backend) | `foss-devstack/penpot-frontend:dev` | `ghcr.io/pressingly/surfsense-web:latest` | (same as backend) |
+| Fork branch (SSO) | `main` (foss-main) | `sso-auth` | `implement-sso-v2` | `foss-main` | `sso-auth` |
+| 1-layer logout file | `apps/web/core/store/user/index.ts` | `app/stores/AuthStore.ts` + `app/scenes/Logout.tsx` | `frontend/src/app/main/data/auth.cljs` | `surfsense_web/lib/auth-utils.ts` | `packages/twenty-front/src/modules/auth/hooks/useAuth.ts` |
+| TTL env consumed | `SESSION_COOKIE_AGE` (Django) | ⚠️ hardcoded `addMonths(3)` | `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE` | `ACCESS_TOKEN_LIFETIME_SECONDS` + refresh | `ACCESS_TOKEN_EXPIRES_IN` + `REFRESH_TOKEN_EXPIRES_IN` (cookie maxAge tracks **refresh**) |
+| Bypass paths | `/god-mode`, `/api/instances`, `/_next/static`, `/static/` | `/api/hooks`, `/_next/static` | `/js/`, `/css/`, `/images/`, `/fonts/` | `/health`, `/docs`, `/openapi.json`, `/_next/static`, `/zero` | `/static/`, `/assets/`, `Path(/favicon.ico)` |
+| SSO integration shape | Django middleware (unified process) | Inside `authentication.ts` middleware (unified) | Reitit RPC middleware (unified) | Cookie handoff at `/auth/jwt/proxy-login` (split FE/BE) | Standalone NestJS controller `GET /auth/sso/proxy-login` (unified) — sets `tokenPair` cookie consumed by Jotai, no Passport ceremony |
+| Email synthesis from username | ✅ `DEFAULT_EMAIL_DOMAIN` at `apps/api/plane/settings/common.py:64` + `proxy_auth.py:66,70` | ✅ `DEFAULT_EMAIL_DOMAIN` at `server/env.ts:537` + `authentication.ts:319` | ✅ `DEFAULT_EMAIL_DOMAIN` (env → `:default-email-domain` config key) at `auth_request.clj:47` | ✅ `DEFAULT_EMAIL_DOMAIN` at `config/__init__.py:321` + `proxy_auth.py:90,94` | ✅ `DEFAULT_EMAIL_DOMAIN` at `sso-proxy-login.controller.ts:resolveEmail` — rejects when env unset (no silent `user@undefined`) |
 
 ⚠️ = known issue, see `docs/known-issues.md`.
 
@@ -141,6 +149,14 @@ When Valkey is recreated, Compose restarts the dependent. Without this, oauth2-p
 **Outline**
 - ForwardAuth integration is **inside** `server/middlewares/authentication.ts`, not a standalone middleware file. Two earlier standalone attempts hit a request/response race on first call.
 - Auth check order: bearer header → `body.token` → `query.token` → `accessToken` cookie → `X-Auth-Request-Email`. SSO header last so subsequent requests short-circuit on the cookie.
+
+**Twenty**
+- Multi-workspace by design, but SSO is single-tenant: `ASKII_WORKSPACE_SUBDOMAIN` env tells the provisioning service which workspace SSO users join. Multi-tenant SSO would require routing by Cognito attribute / email domain / host — not implemented yet.
+- Workspace bootstrap is intricate (per-workspace schema, default views, default roles, onboarding records). First-run requires native signup with `AUTH_TYPE` overridden to non-`SSO`, then the workspace's `subdomain` + `displayName` columns are renamed to match `ASKII_WORKSPACE_SUBDOMAIN`. Then `AUTH_TYPE=SSO` and recreate. See `docs/twenty.md`.
+- The fork's image bundles its own postgres + redis but the devstack wires it to shared `postgres` + `valkey`. The init-db script auto-detects external mode via `PG_DATABASE_URL` (function `psql_target` in `init-db.sh`); reordering or hardcoding localhost would break startup against shared postgres.
+- Cookie carries both access + refresh tokens — cookie `maxAge` derives from `REFRESH_TOKEN_EXPIRES_IN`, **not** the access TTL, so the browser doesn't drop the refresh token alongside the access token expiring. `Secure` flag derives from `SERVER_URL.startsWith('https')` so http:// dev setups work.
+- SECURITY: `auth/sso/proxy-login` is a `@PublicEndpointGuard` route that trusts `X-Auth-Request-Email`. Trust chain (any link broken = auth-bypass): (1) Twenty's `:3000` is unpublished; (2) Traefik's `twenty-secure` runs `strip-auth-headers` BEFORE `mpass-auth`; (3) oauth2-proxy ForwardAuth re-injects the headers from the validated session. Documented inline at the controller class header.
+- Identity-managed UI gating: login/signup form, password reset, change-password button, email field, 2FA workspace toggle, and 2FA setup page (`/settings/profile/two-factor-authentication/TOTP`) all read `useIsSsoEnabled()` and either hide or redirect to `/settings/profile`.
 
 ---
 
