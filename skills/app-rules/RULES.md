@@ -192,7 +192,82 @@ If unified process (like Plane/Outline/Penpot), the middleware can read the head
 
 ---
 
-## 4. Diagnosis quick-reference
+## 4. Threat model & security verification
+
+Every change to compose, Traefik labels, or fork auth code must preserve the **trust chain that closes external header forging**. This section spells out which invariant defends against which threat, so the per-app `<status>` cells in the report can be set with a clear rationale.
+
+### Threat 1 — external attacker forges identity headers
+
+A client on the public internet sends `GET /<protected>` with `X-Auth-Request-Email: admin@askii.ai`.
+
+**Closed by all three of:**
+
+| Layer | What stops the attack |
+|-------|----------------------|
+| `:port` not published on host | The attacker can't reach the backend directly. Traefik on `:443` is the only ingress. |
+| `strip-auth-headers` applied BEFORE `mpass-auth` on every `<app>-secure` router | Inbound `X-Auth-Request-*` from any browser is deleted at the edge before any handler sees it. |
+| `mpass-auth` (oauth2-proxy ForwardAuth) | Without a valid `_oauth2_proxy` cookie → 302 to Cognito. With a valid cookie → oauth2-proxy injects the **real** authenticated user's email, overwriting any client-supplied value. |
+
+**Verifying for an app:** confirm all three for its `<app>-secure` router. Reordering, removing, or downgrading any link silently re-opens the forgery path.
+
+### Threat 2 — sibling-container compromise (internal)
+
+An attacker who breaks one app's process gets shell on a docker container with full network access to every other app's backend port. From there they can dial `twenty:3000` directly with a forged header and impersonate any user.
+
+**Not fully closed.** Network isolation contains external attackers but not lateral movement on the docker network. Acknowledged limitations:
+
+- The compromised app already has its own DB credentials in env, so direct postgres queries bypass auth-at-app entirely.
+- Valkey is unauthenticated in this devstack, so session fixation is also reachable.
+- `_oauth2_proxy` cookies in Valkey can be read by anyone on the docker network.
+
+**Defense-in-depth options (none currently applied):**
+
+- Per-app docker network (Traefik bridges to all apps; apps can't dial each other) — strongest, ~15 lines of compose.
+- App-level shared-secret header injected by Traefik on every `*-secure` router and validated server-side — narrower, requires a fork patch in every app.
+- Per-app valkey passwords / ACL'd databases.
+- Read-only postgres roles for any code path that doesn't write.
+
+If a PR proposes a shared-secret guard or similar narrow hardening, weigh it against the cross-cutting nature of the threat: a per-endpoint check leaves postgres / valkey / S3 access untouched. Either roll the same pattern across all 5 apps or document the limitation in `docs/known-issues.md`.
+
+### Threat 3 — backend acts on `X-Auth-Request-*` without ForwardAuth verifying
+
+If `AUTH_TYPE=SSO` is missing from a backend container, the app may default to a non-SSO mode where it doesn't enforce the header-trust gate. A misconfigured local dev or staging then silently trusts spoofed headers.
+
+**Closed by:** `AUTH_TYPE=SSO` (and the `NEXT_PUBLIC_*_AUTH_TYPE` mirror on split frontends) on every app container, plus a backend-side check that refuses to act on `X-Auth-Request-Email` unless the env is set.
+
+**Verifying for an app:** grep the backend for `AUTH_TYPE` reads; confirm the SSO middleware/controller refuses identity headers when the env is anything other than `SSO`.
+
+### Threat 4 — cookie misconfiguration (Secure / SameSite / HttpOnly)
+
+If a session cookie is minted with `secure: false` on https origins, or `sameSite: 'none'` without `secure`, it can be read by intermediaries or accessed cross-origin. If `httpOnly: false` is required for the SPA to read it, the cookie must be short-lived and cleared after use.
+
+**Closed by, per-app:**
+
+- `secure` flag derives from `SERVER_URL.startsWith('https')`, never hardcoded `true` (breaks http:// dev) or `false` (breaks production).
+- `sameSite: 'lax'` for cross-tab session continuity.
+- `httpOnly: true` for cookies the SPA never reads. SurfSense + Twenty use short-lived `httpOnly: false` cookies for the SSO handoff (60s TTL, cleared by SPA after read).
+
+**Verifying for an app:** find every `res.cookie(...)` / `Set-Cookie` site; confirm the flags. Hardcoded `secure: true` is the most common drift (works in prod, breaks dev).
+
+### Threat 5 — identity-managed UI lets the user break their own SSO lookup
+
+If the SPA exposes "change email" or "change password" while `AUTH_TYPE=SSO`, a user can change their local email to something Cognito doesn't return as `X-Auth-Request-Email` — locking themselves out on the next request.
+
+**Closed by:** SSO-aware gating on every identity-managed surface — login/signup form, password change, password reset, email change, 2FA enforcement toggle, 2FA TOTP setup. Either hide the UI or hard-redirect away.
+
+**Verifying for an app:** grep for `useIsSsoEnabled` / `AUTH_TYPE` reads in the frontend; confirm each identity-managed component checks it.
+
+### Threat 6 — logout regression to `/oauth2/sign_out`
+
+The 2026-04-17 simplification dropped the oauth2-proxy `/sign_out` hop because Cognito hosted `/logout` isn't available on this app client and the intermediate hop produces a visibly broken redirect. A future PR re-introducing `/oauth2/sign_out` would re-introduce the broken UX.
+
+**Closed by:** every app's logout target is the bare portal host (`window.location.hostname.replace(/^[^.]*\./, "foss.")`), no `/oauth2/sign_out` suffix.
+
+**Verifying for an app:** grep the SPA's logout handler for the literal `oauth2/sign_out` — should not appear unless the app has explicit Cognito hosted logout config.
+
+---
+
+## 5. Diagnosis quick-reference
 
 Symptoms and first-check (full table in CLAUDE.md):
 
@@ -211,7 +286,7 @@ Symptoms and first-check (full table in CLAUDE.md):
 
 ---
 
-## 5. References
+## 6. References
 
 - `CLAUDE.md` — narrative + full diagnosis table
 - `docs/known-issues.md` — open issues (Outline TTL hardcode, Penpot bare-username, etc.)

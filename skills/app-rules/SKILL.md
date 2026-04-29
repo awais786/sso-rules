@@ -48,25 +48,30 @@ Cross-check against the matrix in `RULES.md` §2. Confirm:
 
 Print **only** the table below — no PASS/FAIL prose sections, no preamble. Replace each `<status>` placeholder with exactly one of `✅` (invariant holds), `❌` (invariant violated), or `n/a` (invariant doesn't apply to this scope — only allowed where the row's "Notes" guidance explicitly mentions n/a). The Notes cell carries a concrete file:line citation when ✅ and a file:line + the specific fix when ❌. If the change touches no SSO/ForwardAuth surface, skip the table and write a one-sentence "no in-scope changes" line instead.
 
-| Invariant | Status | Notes |
-|-----------|--------|-------|
-| strip-auth-headers + mpass-auth on -secure (in that order) | `<status>` | router(s) checked + file:line; on ❌ name the missing/misordered middleware |
-| bypass router priority + path discipline | `<status>` | router(s) checked at priority=20+; on ❌ flag the user-data / mutation path that was bypassed |
-| backend ports unexposed | `<status>` | on ❌ list every service with a `ports:` block |
-| AUTH_TYPE=SSO env | `<status>` | service(s) checked; on ❌ name the apps missing the env (header-trust gate disabled) |
-| TLS = mkcert (no certresolver) | `<status>` | on ❌ flag any `tls.certresolver=letsencrypt` |
-| build pattern correctness | `<status>` | A vs B (and B1 vs B2) called out; on ❌ flag real values baked into a B image or source volume-mounted into a compiled container |
-| session TTL wired (`SESSION_TTL_SECONDS`/`SESSION_TTL_DURATION`) | `<status>` | service(s) checked; on ❌ list apps not consuming the canonical envs |
-| refresh TTL wired (`SESSION_REFRESH_TTL_*`) | `<status>` | only refresh-token apps (SurfSense, Twenty, Outline OAuth provider) — use `n/a` for apps that don't mint refresh tokens |
-| sliding-refresh (`SESSION_COOKIE_REFRESH_SECONDS`) wired | `<status>` | oauth2-proxy + Penpot only — use `n/a` for everything else |
-| valkey cascade declared | `<status>` | on ❌ list services missing `depends_on: valkey: { restart: true }` |
-| logout shape (1-layer + narrowed regex) | `<status>` | logout file checked; on ❌ name the wrong target (e.g. `/oauth2/sign_out`) or the loose `^[^.]*\.` regex |
-| identity-managed UI hidden under SSO | `<status>` | gates checked: signin/signup, password change, email change, password reset, 2FA enforce + TOTP setup |
-| compose hygiene (no bare `docker compose`) | `<status>` | on ❌ flag scripts/Makefile invoking compose without `COMPOSE_FILE` + `--no-deps` |
+The first three rows together cover Threat 1 in `RULES.md` §4 (external header forging). All three must be `✅` or the trust chain is open. Rows 4–6 cover Threat 3 (header-trust gate). Row 11 covers Threat 4 (cookie misconfiguration). Rows 12–13 cover Threats 5–6 (identity-managed UI + logout regression). The remaining rows are operational invariants whose breakage doesn't directly open auth-bypass paths but breaks the deploy or the cross-app contract.
+
+| # | Invariant | Status | Notes |
+|---|-----------|--------|-------|
+| 1 | strip-auth-headers + mpass-auth on -secure (in that order) | `<status>` | router(s) checked + file:line; on ❌ name the missing/misordered middleware. Reordering re-opens external header forging |
+| 2 | backend ports unexposed | `<status>` | on ❌ list every service with a `ports:` block. Publishing a backend port bypasses the strip-auth chain entirely |
+| 3 | bypass router priority + path discipline | `<status>` | router(s) checked at priority=20+; on ❌ flag the user-data / mutation path that was bypassed. A bypassed mutation is an unauthenticated write |
+| 4 | AUTH_TYPE=SSO env (backend) | `<status>` | service(s) checked; on ❌ name the apps missing the env (header-trust gate disabled — backend may trust spoofed headers in non-SSO mode) |
+| 5 | AUTH_TYPE mirror on split frontends (`NEXT_PUBLIC_*_AUTH_TYPE`, `window._env_.AUTH_TYPE`) | `<status>` | only split-FE apps (SurfSense web, Twenty SPA via `generateFrontConfig`); use `n/a` for unified-image apps |
+| 6 | backend refuses identity headers when AUTH_TYPE≠SSO | `<status>` | grep the backend SSO middleware/controller for the early-return / 404 on the header-trust gate |
+| 7 | TLS = mkcert (no certresolver) | `<status>` | on ❌ flag any `tls.certresolver=letsencrypt` |
+| 8 | build pattern correctness | `<status>` | A vs B (and B1 vs B2) called out; on ❌ flag real values baked into a B image or source volume-mounted into a compiled container |
+| 9 | session TTL wired (`SESSION_TTL_SECONDS`/`SESSION_TTL_DURATION`) | `<status>` | service(s) checked; on ❌ list apps not consuming the canonical envs |
+| 10 | refresh TTL wired (`SESSION_REFRESH_TTL_*`) | `<status>` | only refresh-token apps (SurfSense, Twenty, Outline OAuth provider) — use `n/a` for apps that don't mint refresh tokens |
+| 11 | sliding-refresh (`SESSION_COOKIE_REFRESH_SECONDS`) wired | `<status>` | oauth2-proxy + Penpot only — use `n/a` for everything else |
+| 12 | cookie security flags (`secure` derives from SERVER_URL https; `sameSite: 'lax'`; `httpOnly` correct for cookie's role) | `<status>` | every `res.cookie(...)` / `Set-Cookie` site checked; on ❌ flag any hardcoded `secure: true` / `secure: false` (breaks dev / breaks prod), missing `sameSite`, or `httpOnly: false` on a long-lived cookie |
+| 13 | valkey cascade declared | `<status>` | on ❌ list services missing `depends_on: valkey: { restart: true }` |
+| 14 | logout shape (1-layer, no `/oauth2/sign_out`, portal-host regex) | `<status>` | logout file checked; on ❌ flag any re-introduction of `/oauth2/sign_out`, the loose `^[^.]*\.` regex without an `origin` fallback, or a target that isn't the portal host |
+| 15 | identity-managed UI hidden under SSO | `<status>` | gates checked: signin/signup, password change/reset, email change, 2FA enforcement toggle, 2FA TOTP setup. Each one must hide or hard-redirect — partial gating leaves the user a path to lock themselves out |
+| 16 | compose hygiene (no bare `docker compose`) | `<status>` | on ❌ flag scripts/Makefile invoking compose without `COMPOSE_FILE` + `--no-deps` |
 
 End the table with one of:
 - `**All invariants hold.**` — every row is ✅ or `n/a`
-- `**N violations.**` followed by a single sentence calling out the most load-bearing fix first (the one that re-exposes auth bypass, leaks user data, or breaks the next deploy).
+- `**N violations.**` followed by a single sentence calling out the most load-bearing fix first (the one that re-exposes auth bypass, leaks user data, or breaks the next deploy). Rows 1–6 and 12 are the security-critical ones — flag any failure there ahead of the operational rows.
 
 ## What this skill is NOT
 - Not a runtime health check — that's a separate `/review`-style skill.
