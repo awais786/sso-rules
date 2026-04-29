@@ -51,21 +51,24 @@ Every fork is one of:
 Pick A vs B (and B1 vs B2) before writing the Dockerfile. Don't volume-mount source into a Pattern B container — values were baked at build, mounting source has zero effect. Don't bake real values into a B2 image — terser will dead-code-eliminate placeholder branches if it sees them as falsy literals.
 
 ### Session TTL
-- Four canonical env vars in `.env`, two pairs (seconds + duration), one for the access cookie and one for the refresh token. Apps wire whichever shape their native config takes:
+- Five canonical env vars in `.env`. Two access-pair (seconds + duration), two refresh-pair (seconds + duration), and one sliding-refresh interval. Apps wire whichever shape their native config takes:
   ```
   SESSION_TTL_SECONDS=28800            # 8h — access cookie / app session, seconds
   SESSION_TTL_DURATION=8h              # same window, duration string
 
   SESSION_REFRESH_TTL_SECONDS=57600    # 16h — refresh token, seconds (must be >= access)
   SESSION_REFRESH_TTL_DURATION=16h     # same window, duration string
+
+  SESSION_COOKIE_REFRESH_SECONDS=3600  # 1h — sliding-refresh interval (must be < SESSION_TTL_SECONDS)
   ```
+- The sliding-refresh window controls how often oauth2-proxy + Penpot **re-validate** the cookie while the user is active. Set to a value < `SESSION_TTL_SECONDS` (typically 1h). Result: an actively-clicking user never hits the 8h ceiling — the cookie keeps rolling forward as long as activity continues. Set to `0` to disable. Compose default is `3600`.
 - Every session-issuing app **MUST** wire one of these into its native config — verified ground truth in `docker-compose.yml`:
   - **Plane (Django):** `SESSION_COOKIE_AGE = ${SESSION_TTL_SECONDS}`
   - **SurfSense (FastAPI):** `ACCESS_TOKEN_LIFETIME_SECONDS = ${SESSION_TTL_SECONDS}`, `REFRESH_TOKEN_LIFETIME_SECONDS = ${SESSION_REFRESH_TTL_SECONDS}`
-  - **Penpot:** `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE = ${SESSION_TTL_SECONDS}s`
-  - **oauth2-proxy:** `OAUTH2_PROXY_COOKIE_EXPIRE = ${SESSION_TTL_SECONDS}s`
+  - **Penpot:** `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE = ${SESSION_TTL_SECONDS}s`, `PENPOT_AUTH_TOKEN_COOKIE_RENEWAL_MAX_AGE = ${SESSION_COOKIE_REFRESH_SECONDS}s`
+  - **oauth2-proxy:** `OAUTH2_PROXY_COOKIE_EXPIRE = ${SESSION_TTL_SECONDS}s`, `OAUTH2_PROXY_COOKIE_REFRESH = ${SESSION_COOKIE_REFRESH_SECONDS}s`
+  - **Outline (ForwardAuth JWT cookie):** `SESSION_TTL_SECONDS` — fork patch in `server/middlewares/authentication.ts`, `server/utils/authentication.ts`, `server/routes/auth/index.ts` replaces the upstream `addMonths(3)` constant. Outline-as-OAuth-provider also wires `OAUTH_PROVIDER_ACCESS_TOKEN_LIFETIME` / `OAUTH_PROVIDER_REFRESH_TOKEN_LIFETIME`.
   - **Twenty (NestJS):** `ACCESS_TOKEN_EXPIRES_IN = ${SESSION_TTL_DURATION}`, `REFRESH_TOKEN_EXPIRES_IN = ${SESSION_REFRESH_TTL_DURATION}` — also drives the SSO cookie maxAge (refresh, not access).
-- Apps that hardcode TTL (Outline currently — `addMonths(new Date(), 3)` in `app/middlewares/authentication.ts:59`) need a fork patch reading `SESSION_TTL_SECONDS`. Tracked in `docs/known-issues.md`.
 
 ### Logout
 - Every SPA logout: clear app session (server-side endpoint) → clear client state (localStorage, mobx, IndexedDB) → top-level navigate to portal host:
