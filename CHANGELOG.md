@@ -2,6 +2,15 @@
 
 All notable changes to the sso-rules plugin land here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [SemVer](https://semver.org/) — bumps reflect compatibility of the report shape and the canonical rule set, not the underlying devstack.
 
+## [0.4.0] — 2026-04-30
+
+### Added
+- `scripts/audit-sso.sh` — pure-bash deterministic audit of the 16 invariants in `SKILL.md` §5. No LLM, no API key. Runs in <30s against any compose repo with `bash audit-sso.sh` (compose path, traefik dir, etc. configurable via env vars). Exits 1 on security-critical (rows 1-7, 12) violations so it can gate CI. 11 of 16 rows are fully deterministic; the 5 fork-side semantic rows (3 path discipline, 6 backend AUTH_TYPE gate, 12 cookie flags, 14 logout regex form, 15 identity-managed UI) report `?` when forks aren't checked out alongside the compose repo.
+- README "Running the audit" section — three patterns: local invocation, GitHub Actions step that curls a pinned tag, fetching forks alongside for full coverage of rows 14-15.
+
+### Why
+Previously the audit could only be run via the `/sso-rules:audit-all-apps` skill (LLM-backed, requires API budget, slower, non-deterministic). The bash script catches the same regressions in CI for free, while the LLM path stays available for the harder semantic checks.
+
 ## [0.3.0] — 2026-04-29
 
 ### Added

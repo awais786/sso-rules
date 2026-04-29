@@ -52,6 +52,46 @@ After install:
 /sso-rules:app-rules
 ```
 
+## Running the audit (no LLM, free, deterministic)
+
+`scripts/audit-sso.sh` does a pure-bash version of 11 of the 16 invariants — same threat-to-row mapping as `SKILL.md` §5. Runs in <30s, no API key, exits 1 on security-critical violations (rows 1-7 + 12), prints the same 16-row table. The 5 fork-side semantic rows report `?` when forks aren't on disk; the LLM-backed `/sso-rules:audit-all-apps` covers those.
+
+**Local, against a compose repo:**
+```
+bash <(curl -sSfL https://raw.githubusercontent.com/awais786/sso-rules/v0.4.0/scripts/audit-sso.sh)
+```
+or, if cloned:
+```
+COMPOSE=docker-compose.yml \
+  bash /path/to/sso-rules/scripts/audit-sso.sh
+```
+
+**GitHub Actions step** (drop in `.github/workflows/sso-audit.yml`):
+```yaml
+- name: Run SSO audit
+  run: |
+    curl -sSfL https://raw.githubusercontent.com/awais786/sso-rules/v0.4.0/scripts/audit-sso.sh -o audit-sso.sh
+    chmod +x audit-sso.sh
+    bash audit-sso.sh
+```
+Pin to the version tag (`v0.4.0`) so a rule change can't silently fail your CI; bump deliberately.
+
+**For full coverage** (rows 14-15 read fork sources), check out the forks alongside your compose repo:
+```
+- uses: actions/checkout@v4
+  with: { repository: Pressingly/plane,    ref: foss-main, path: ../plane }
+- uses: actions/checkout@v4
+  with: { repository: Pressingly/outline,  ref: foss-main, path: ../outline }
+- uses: actions/checkout@v4
+  with: { repository: Pressingly/penpot,   ref: implement-sso-v2, path: ../penpot }
+- uses: actions/checkout@v4
+  with: { repository: Pressingly/SurfSense, ref: foss-main, path: ../SurfSense }
+- uses: actions/checkout@v4
+  with: { repository: awais786/twenty,     ref: sso-auth, path: ../twenty }
+```
+
+The script is invariant-by-invariant transparent — every row prints a file:line citation on ✅ and a file:line + the concrete fix on ❌.
+
 ## Use cases
 
 - **Editing `docker-compose.yml`** — verify a new env / router / volume mount doesn't break an invariant
@@ -74,13 +114,19 @@ sso-rules/
 ├── .claude-plugin/plugin.json     # plugin manifest
 ├── marketplace.json                # marketplace listing
 ├── commands/
-│   └── app-rules.md               # /sso-rules:app-rules slash command
+│   ├── app-rules.md               # /sso-rules:app-rules slash command
+│   └── audit-all-apps.md          # /sso-rules:audit-all-apps slash command
 ├── skills/
 │   └── app-rules/
 │       ├── SKILL.md                # the skill itself (loaded by Claude Code)
 │       └── RULES.md                # canonical contract: §1 invariants, §2 app matrix,
 │                                   # §3 new-app checklist, §4 threat model,
 │                                   # §5 diagnosis quick-ref, §6 references
+├── scripts/
+│   └── audit-sso.sh               # pure-bash deterministic audit, no LLM,
+│                                   # no API key. Same 16-row report as the skill.
+│                                   # Runs in <30s; exits 1 on security-critical
+│                                   # violations so it can gate CI.
 ├── CHANGELOG.md                    # release notes
 ├── LICENSE                         # MIT
 └── README.md                       # this file
