@@ -46,23 +46,23 @@ Cross-check against the matrix in `RULES.md` §2. Confirm:
 
 ### 5. Report
 
-Print **only** the table below — no PASS/FAIL prose sections, no preamble. Each Status cell is exactly one of `✅`, `❌`, or `n/a`. The Notes cell carries a concrete file:line citation when ✅ and a file:line + the specific fix when ❌. If the change touches no SSO/ForwardAuth surface, skip the table and write a one-sentence "no in-scope changes" line instead.
+Print **only** the table below — no PASS/FAIL prose sections, no preamble. Replace each `<status>` placeholder with exactly one of `✅` (invariant holds), `❌` (invariant violated), or `n/a` (invariant doesn't apply to this scope — only allowed where the row's "Notes" guidance explicitly mentions n/a). The Notes cell carries a concrete file:line citation when ✅ and a file:line + the specific fix when ❌. If the change touches no SSO/ForwardAuth surface, skip the table and write a one-sentence "no in-scope changes" line instead.
 
 | Invariant | Status | Notes |
 |-----------|--------|-------|
-| strip-auth-headers + mpass-auth on -secure (in that order) | ✅ \| ❌ | router(s) checked + file:line; on ❌ name the missing/misordered middleware |
-| bypass router priority + path discipline | ✅ \| ❌ | router(s) checked at priority=20+; on ❌ flag the user-data / mutation path that was bypassed |
-| backend ports unexposed | ✅ \| ❌ | on ❌ list every service with a `ports:` block |
-| AUTH_TYPE=SSO env | ✅ \| ❌ | service(s) checked; on ❌ name the apps missing the env (header-trust gate disabled) |
-| TLS = mkcert (no certresolver) | ✅ \| ❌ | on ❌ flag any `tls.certresolver=letsencrypt` |
-| build pattern correctness | ✅ \| ❌ | A vs B (and B1 vs B2) called out; on ❌ flag real values baked into a B image or source volume-mounted into a compiled container |
-| session TTL wired (`SESSION_TTL_SECONDS`/`SESSION_TTL_DURATION`) | ✅ \| ❌ | service(s) checked; on ❌ list apps not consuming the canonical envs |
-| refresh TTL wired (`SESSION_REFRESH_TTL_*`) | ✅ \| ❌ \| n/a | only refresh-token apps (SurfSense, Twenty, Outline OAuth provider). `n/a` for apps that don't mint refresh tokens |
-| sliding-refresh (`SESSION_COOKIE_REFRESH_SECONDS`) wired | ✅ \| ❌ \| n/a | oauth2-proxy + Penpot only. `n/a` for everything else |
-| valkey cascade declared | ✅ \| ❌ | on ❌ list services missing `depends_on: valkey: { restart: true }` |
-| logout shape (1-layer + narrowed regex) | ✅ \| ❌ | logout file checked; on ❌ name the wrong target (e.g. `/oauth2/sign_out`) or the loose `^[^.]*\.` regex |
-| identity-managed UI hidden under SSO | ✅ \| ❌ | gates checked: signin/signup, password change, email change, password reset, 2FA enforce + TOTP setup |
-| compose hygiene (no bare `docker compose`) | ✅ \| ❌ | on ❌ flag scripts/Makefile invoking compose without `COMPOSE_FILE` + `--no-deps` |
+| strip-auth-headers + mpass-auth on -secure (in that order) | `<status>` | router(s) checked + file:line; on ❌ name the missing/misordered middleware |
+| bypass router priority + path discipline | `<status>` | router(s) checked at priority=20+; on ❌ flag the user-data / mutation path that was bypassed |
+| backend ports unexposed | `<status>` | on ❌ list every service with a `ports:` block |
+| AUTH_TYPE=SSO env | `<status>` | service(s) checked; on ❌ name the apps missing the env (header-trust gate disabled) |
+| TLS = mkcert (no certresolver) | `<status>` | on ❌ flag any `tls.certresolver=letsencrypt` |
+| build pattern correctness | `<status>` | A vs B (and B1 vs B2) called out; on ❌ flag real values baked into a B image or source volume-mounted into a compiled container |
+| session TTL wired (`SESSION_TTL_SECONDS`/`SESSION_TTL_DURATION`) | `<status>` | service(s) checked; on ❌ list apps not consuming the canonical envs |
+| refresh TTL wired (`SESSION_REFRESH_TTL_*`) | `<status>` | only refresh-token apps (SurfSense, Twenty, Outline OAuth provider) — use `n/a` for apps that don't mint refresh tokens |
+| sliding-refresh (`SESSION_COOKIE_REFRESH_SECONDS`) wired | `<status>` | oauth2-proxy + Penpot only — use `n/a` for everything else |
+| valkey cascade declared | `<status>` | on ❌ list services missing `depends_on: valkey: { restart: true }` |
+| logout shape (1-layer + narrowed regex) | `<status>` | logout file checked; on ❌ name the wrong target (e.g. `/oauth2/sign_out`) or the loose `^[^.]*\.` regex |
+| identity-managed UI hidden under SSO | `<status>` | gates checked: signin/signup, password change, email change, password reset, 2FA enforce + TOTP setup |
+| compose hygiene (no bare `docker compose`) | `<status>` | on ❌ flag scripts/Makefile invoking compose without `COMPOSE_FILE` + `--no-deps` |
 
 End the table with one of:
 - `**All invariants hold.**` — every row is ✅ or `n/a`
