@@ -2,6 +2,37 @@
 
 All notable changes to the sso-rules plugin land here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [SemVer](https://semver.org/) — bumps reflect compatibility of the report shape and the canonical rule set, not the underlying devstack.
 
+## [0.5.0] — 2026-04-30
+
+### Added
+- `.github/workflows/audit.yml` — reusable workflow (`workflow_call`). Compose repos add a 5-line caller workflow that pins to a tag of this plugin; the reusable workflow does checkout + fork checkout + yq install + audit run + PR comment + security-critical fail-on-violation. Single source of truth for the workflow logic; bump the consumer's `@v0.x.y` ref to roll out rule changes.
+- `apps-overview.md` — per-app SSO integration + tech stack quick reference. Architecture-only, no vuln disclosure. Useful for team onboarding.
+
+### Why
+Previously each compose repo would have to maintain its own copy of the workflow YAML (option A in the design). With reusable workflows, consumers write 5 lines and inherit the full chain. Adding a 6th compose repo is now a paste of 5 lines; updating the workflow logic is one PR in this plugin + a tag bump in each consumer.
+
+### Consumer pattern
+
+```yaml
+# .github/workflows/sso-audit.yml in any compose repo
+on:
+  pull_request:
+    paths: [docker-compose.yml, traefik/**, Makefile, options.mk, .env.example]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sso-audit:
+    uses: awais786/sso-rules/.github/workflows/audit.yml@v0.5.0
+```
+
 ## [0.4.0] — 2026-04-30
 
 ### Added

@@ -10,7 +10,7 @@
       "name": "sso-rules",
       "source": "./",
       "description": "Devstack invariants for apps behind oauth2-proxy + Traefik ForwardAuth (Plane, Outline, Penpot, SurfSense, Twenty). Enforces SSO chain, bypass routers, build patterns, logout shape, session TTL, cookie security flags, and compose hygiene. 16-row strict audit table mapped to a 6-threat model.",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "category": "devops"
     }
   ]

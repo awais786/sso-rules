@@ -1,0 +1,151 @@
+name: SSO Audit (reusable)
+
+# Reusable workflow that runs the SSO/ForwardAuth audit against the calling
+# repo. Called from each compose repo's own .github/workflows/sso-audit.yml
+# via `uses: awais786/sso-rules/.github/workflows/audit.yml@<tag>`.
+#
+# Pin to a tagged release so an audit-script update can't silently fail
+# someone's CI — bump the consumer's `@v0.x.y` ref deliberately when the
+# rules evolve.
+#
+# What it does:
+#   1. Checks out the caller's repo (the compose repo)
+#   2. Checks out each known fork as a sibling so fork-side rows (14, 15)
+#      can be evaluated. continue-on-error so missing/private forks don't
+#      fail the whole job.
+#   3. Installs yq (needed for rows 2, 4, 8, 13)
+#   4. Fetches the audit script from this repo's same ref (whatever tag
+#      the caller pinned), and runs it
+#   5. Posts the result as a PR comment when triggered by a pull_request
+#   6. Fails the job if security-critical rows (1-7, 12) report ❌
+#
+# Inputs (all optional — sane defaults match the foss-server-bundle layout):
+#   compose-path      docker-compose.yml in caller's repo (default: docker-compose.yml)
+#   skip-fork-checkout if "true", skip cloning the forks alongside; rows 14,15 will report ?
+#                     (default: "false")
+
+on:
+  workflow_call:
+    inputs:
+      compose-path:
+        description: Path to the compose file relative to caller's repo root
+        required: false
+        type: string
+        default: docker-compose.yml
+      skip-fork-checkout:
+        description: Skip cloning the per-app forks; rows 14/15 will report `?`
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repo
+        uses: actions/checkout@v4
+
+      - name: Check out Plane fork
+        if: ${{ !inputs.skip-fork-checkout }}
+        uses: actions/checkout@v4
+        with:
+          repository: Pressingly/plane
+          ref: foss-main
+          path: ../plane
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Check out Outline fork
+        if: ${{ !inputs.skip-fork-checkout }}
+        uses: actions/checkout@v4
+        with:
+          repository: Pressingly/outline
+          ref: foss-main
+          path: ../outline
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Check out Penpot fork
+        if: ${{ !inputs.skip-fork-checkout }}
+        uses: actions/checkout@v4
+        with:
+          repository: Pressingly/penpot
+          ref: implement-sso-v2
+          path: ../penpot
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Check out SurfSense fork
+        if: ${{ !inputs.skip-fork-checkout }}
+        uses: actions/checkout@v4
+        with:
+          repository: Pressingly/SurfSense
+          ref: foss-main
+          path: ../SurfSense
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Check out Twenty fork
+        if: ${{ !inputs.skip-fork-checkout }}
+        uses: actions/checkout@v4
+        with:
+          repository: awais786/twenty
+          ref: sso-auth
+          path: ../twenty
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Fetch audit script (pinned to caller's ref of this workflow)
+        env:
+          REF: ${{ github.workflow_ref }}
+        run: |
+          # github.workflow_ref looks like: awais786/sso-rules/.github/workflows/audit.yml@refs/tags/v0.5.0
+          TAG="${REF##*@}"
+          # Resolve refs/tags/<tag> or refs/heads/<branch> to the bare name
+          TAG="${TAG#refs/tags/}"
+          TAG="${TAG#refs/heads/}"
+          echo "Fetching audit script from awais786/sso-rules @ ${TAG}"
+          curl -sSfL "https://raw.githubusercontent.com/awais786/sso-rules/${TAG}/scripts/audit-sso.sh" -o /tmp/audit-sso.sh
+          chmod +x /tmp/audit-sso.sh
+
+      - name: Run audit
+        id: audit
+        env:
+          COMPOSE: ${{ inputs.compose-path }}
+        run: |
+          set +e
+          bash /tmp/audit-sso.sh | tee /tmp/audit.md
+          AUDIT_EXIT=${PIPESTATUS[0]}
+          set -e
+          {
+            echo "exit_code=${AUDIT_EXIT}"
+            echo "report<<__AUDIT_END__"
+            cat /tmp/audit.md
+            echo "__AUDIT_END__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR with audit table
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = `${{ steps.audit.outputs.report }}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: report,
+            });
+
+      - name: Fail on security-critical violations
+        if: steps.audit.outputs.exit_code != '0'
+        run: |
+          echo "::error::SSO audit reports security-critical violations (rows 1-7 or 12). See the audit table above."
+          exit 1

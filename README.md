@@ -58,7 +58,7 @@ After install:
 
 **Local, against a compose repo:**
 ```
-bash <(curl -sSfL https://raw.githubusercontent.com/awais786/sso-rules/v0.4.0/scripts/audit-sso.sh)
+bash <(curl -sSfL https://raw.githubusercontent.com/awais786/sso-rules/v0.5.0/scripts/audit-sso.sh)
 ```
 or, if cloned:
 ```
@@ -66,17 +66,41 @@ COMPOSE=docker-compose.yml \
   bash /path/to/sso-rules/scripts/audit-sso.sh
 ```
 
-**GitHub Actions step** (drop in `.github/workflows/sso-audit.yml`):
+**GitHub Actions — reusable workflow (recommended).** Drop a 5-line caller in `.github/workflows/sso-audit.yml` of any compose repo:
+
+```yaml
+name: SSO audit
+on:
+  pull_request:
+    paths: [docker-compose.yml, traefik/**, Makefile, options.mk, .env.example]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sso-audit:
+    uses: awais786/sso-rules/.github/workflows/audit.yml@v0.5.0
+```
+
+The reusable workflow handles checkout (caller + 5 forks), yq install, audit run, PR comment, and CI gating. Pin to a tag (`@v0.5.0`); bump deliberately when rules evolve. To skip fork checkout (rows 14-15 will report `?`), pass `with: { skip-fork-checkout: true }`. For a non-default compose path, pass `with: { compose-path: path/to/docker-compose.yml }`.
+
+**GitHub Actions — inline curl (alternative).** If you can't reach the reusable workflow (e.g. action perms locked down), drop the script in directly:
 ```yaml
 - name: Run SSO audit
   run: |
-    curl -sSfL https://raw.githubusercontent.com/awais786/sso-rules/v0.4.0/scripts/audit-sso.sh -o audit-sso.sh
+    curl -sSfL https://raw.githubusercontent.com/awais786/sso-rules/v0.5.0/scripts/audit-sso.sh -o audit-sso.sh
     chmod +x audit-sso.sh
     bash audit-sso.sh
 ```
-Pin to the version tag (`v0.4.0`) so a rule change can't silently fail your CI; bump deliberately.
+Pin to the version tag so a rule change can't silently fail your CI; bump deliberately.
 
-**For full coverage** (rows 14-15 read fork sources), check out the forks alongside your compose repo:
+**For full coverage** with the inline pattern (rows 14-15 read fork sources), check out the forks alongside your compose repo:
 ```
 - uses: actions/checkout@v4
   with: { repository: Pressingly/plane,    ref: foss-main, path: ../plane }
@@ -89,6 +113,7 @@ Pin to the version tag (`v0.4.0`) so a rule change can't silently fail your CI; 
 - uses: actions/checkout@v4
   with: { repository: awais786/twenty,     ref: sso-auth, path: ../twenty }
 ```
+The reusable workflow does this automatically.
 
 The script is invariant-by-invariant transparent — every row prints a file:line citation on ✅ and a file:line + the concrete fix on ❌.
 
@@ -127,6 +152,10 @@ sso-rules/
 │                                   # no API key. Same 16-row report as the skill.
 │                                   # Runs in <30s; exits 1 on security-critical
 │                                   # violations so it can gate CI.
+├── .github/workflows/
+│   └── audit.yml                  # reusable workflow (workflow_call) — compose
+│                                   # repos add a 5-line caller pinned to a tag.
+├── apps-overview.md                # per-app SSO + tech stack quick reference
 ├── CHANGELOG.md                    # release notes
 ├── LICENSE                         # MIT
 └── README.md                       # this file
