@@ -84,18 +84,21 @@ Each app has `*-bypass` / `*-public` / `*-static` routers at `priority=20+` that
 
 All 5 apps use the **1-layer logout** shape since 2026-04-17 — clear app session, navigate to portal host. No oauth2-proxy `/sign_out` hop (not available with current Cognito app client).
 
+The portal-host prefix is driven by the **required** `SMB_NAME` env var (no default — the SPA must crash loudly if unset rather than redirect to the wrong host). Container env name is uniform across apps; only the *exposure* mechanism varies per stack.
+
 ```js
-const portalHost = window.location.hostname.replace(/^[^.]*\./, "foss.");
+const smbName = process.env.SMB_NAME.trim();   // exposure varies per stack — see table
+const portalHost = window.location.hostname.replace(/^[^.]*\./, `${smbName}.`);
 window.location.href = `${window.location.protocol}//${portalHost}/`;
 ```
 
-| App | Logout file |
-|-----|-------------|
-| Plane | `apps/web/core/store/user/index.ts` |
-| Outline | `app/stores/AuthStore.ts` + `app/scenes/Logout.tsx` |
-| Penpot | `frontend/src/app/main/data/auth.cljs` |
-| SurfSense | `surfsense_web/lib/auth-utils.ts` |
-| Twenty | `packages/twenty-front/src/modules/auth/hooks/useAuth.ts` |
+| App | Logout file | `SMB_NAME` exposure |
+|-----|-------------|---------------------|
+| Plane | `apps/web/core/store/user/index.ts` | Vite `define` (`apps/web/vite.config.ts` adds `SMB_NAME` to the allowlist next to `VITE_*`) |
+| Outline | `app/stores/AuthStore.ts` + `app/scenes/Logout.tsx` | `@Public` decorator on `SMB_NAME` in `server/env.ts` → presented to client via `window.env` |
+| Penpot | `frontend/src/app/main/data/auth.cljs` | `nginx-entrypoint.sh` substitutes `penpotSmbName` token in `config.js`; read by `app.config/smb-name` |
+| SurfSense | `surfsense_web/lib/auth-utils.ts` | Dockerfile bakes `__NEXT_PUBLIC_SMB_NAME__` placeholder; `docker-entrypoint.js` substitutes `process.env.SMB_NAME` at startup |
+| Twenty | `packages/twenty-front/src/modules/auth/hooks/useAuth.ts` | `generateFrontConfig` writes `SMB_NAME` into `window._env_` on `index.html` at server start |
 
 ## Per-app gotchas
 
