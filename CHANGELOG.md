@@ -2,6 +2,24 @@
 
 All notable changes to the sso-rules plugin land here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [SemVer](https://semver.org/) — bumps reflect compatibility of the report shape and the canonical rule set, not the underlying devstack.
 
+## [0.6.0] — 2026-05-02
+
+### Changed
+- **Logout rule (row 14)** — portal host is now derived from `window.location.hostname` via regex `replace(/^([^-]+)-[^.]+\.(.+)/, "$1.$2")`. The previous `SMB_NAME`-env-driven shape is retired. Consumers running `audit-all-apps` against forks updated post-2026-05-02 should expect the logout file to no longer read any env var; presence of `process.env.SMB_NAME` / `env.SMB_NAME` / `cf/smb-name` / `window._env_.SMB_NAME` reads on the logout path is now a row-14 violation.
+
+### Why
+Threading `SMB_NAME` from devstack env → fork Dockerfile build-arg or runtime entrypoint placeholder → SPA bundle had four independent failure points (compose env not set, Dockerfile missing `ARG`, entrypoint missing the placeholder, type/decorator missing). Each broke silently — vite would bake `undefined`, Next.js would leave the placeholder literal, the SPA would crash logout with a generic toast. The regex collapses the entire chain to one runtime expression; the hostname is the source of truth, and if the user reached the app, the prefix is correct by construction.
+
+### Migrating fork PRs from 0.5.x to 0.6.0
+Drop every link in the SMB_NAME chain on the fork side. The single canonical logout body becomes:
+
+```js
+const portalHost = window.location.hostname.replace(/^([^-]+)-[^.]+\.(.+)/, "$1.$2");
+window.location.href = `${window.location.protocol}//${portalHost}`;
+```
+
+Files to revert to upstream on the fork: `.env.example` SMB_NAME row, Dockerfile `SMB_NAME` ARG/ENV, runtime entrypoint placeholder substitution, server-side `@Public` SMB_NAME field (Outline). Devstack-side: drop `SMB_NAME` env on app services + `--build-arg SMB_NAME` on Makefile build targets.
+
 ## [0.5.0] — 2026-04-30
 
 ### Added
