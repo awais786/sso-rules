@@ -39,6 +39,18 @@ These rules apply to **every** app. No exceptions without a written tradeoff in 
 - Devstack uses mkcert wildcard at `traefik/certs/local.crt` for `*.${PLATFORM_DOMAIN}`.
 - Routers use `tls=true` (default cert store). **Never** `tls.certresolver=letsencrypt` — ACME is not configured.
 
+### No plaintext HTTP routes
+- Traefik **MUST** redirect every request on the `web` entrypoint (port 80) to the `websecure` entrypoint (port 443) at the entrypoint level. Configure via the documented CLI flag form on the Traefik command:
+  ```yaml
+  command:
+    - --entrypoints.web.http.redirections.entryPoint.to=websecure
+    - --entrypoints.web.http.redirections.entryPoint.scheme=https
+  ```
+- The env-var form (`TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_ENTRYPOINT_TO=…`) is **silently ignored** on Traefik 3.x — verified on `traefik:v3.6.12` by inspecting the static-config dump in `docker logs traefik`: the `web` entrypoint had no `redirections` key even though the env vars were set. Do not use the env-var form.
+- After the entrypoint redirect is in place, every per-app HTTP router (`traefik.http.routers.<name>.entrypoints=web` with no middlewares) is dead config — Traefik catches the traffic at the entrypoint before any router matches. Such routers may still exist for historical reasons; they're harmless once the entrypoint redirect lands, but should be deleted in cleanup passes.
+- An app HTTP router that *serves content directly* (no `redirectScheme` middleware, no entrypoint-level redirect catching it first) is forbidden. The 2026-04-30 Electric `/v1/shape` exfiltration was exactly this shape — HTTPS sibling had `mpass-auth`, HTTP twin did not. Same pattern repeats on the main `/` path of any app whose HTTP router lacks middlewares (verified live on prod 2026-05-04: `http://foss.arbisoft.com/` returned 105KB of plaintext portal HTML, `http://foss-research.arbisoft.com/` returned the SurfSense Next.js SPA).
+- ACME HTTP-01 challenge (`/.well-known/acme-challenge/`) is the only legitimate exception. Traefik 3.x auto-registers the challenge router with higher priority than the entrypoint redirect, so cert renewal continues to work unchanged when the redirect is configured.
+
 ### Build pattern
 Every fork is one of:
 - **Pattern A (interpreted):** Pull official image. Volume-mount fork source. Edit → restart service → live.
