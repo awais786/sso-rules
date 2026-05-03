@@ -27,6 +27,7 @@ For every diff in scope (compose, Traefik labels, fork code), verify:
 - **Backend ports** are NOT published on host (no `ports:` block on app backends)
 - **`AUTH_TYPE=SSO`** env is set on every app container (header-trust gate)
 - **TLS** uses `tls=true` only — never `tls.certresolver=letsencrypt`
+- **No plaintext HTTP** — Traefik command includes `--entrypoints.web.http.redirections.entryPoint.to=websecure` (CLI flag form; env-var form is silently ignored on Traefik 3.x). No per-app HTTP router serves content without a redirect; ACME HTTP-01 challenge is the only allowed exception
 - **Build pattern** is consistent: Pattern A (interpreted) gets volume mounts; Pattern B (compiled) gets placeholder tokens (`__NEXT_PUBLIC_FOO__`), not real values, baked into the image
 - **Session access TTL** wires `SESSION_TTL_SECONDS` or `SESSION_TTL_DURATION` into the app's native config (Django `SESSION_COOKIE_AGE`, Penpot `:auth-token-cookie-max-age`, oauth2-proxy `OAUTH2_PROXY_COOKIE_EXPIRE`, FastAPI `ACCESS_TOKEN_LIFETIME_SECONDS`, Twenty `ACCESS_TOKEN_EXPIRES_IN`, Outline JWT cookie via fork patch)
 - **Refresh TTL** wires `SESSION_REFRESH_TTL_SECONDS` / `SESSION_REFRESH_TTL_DURATION` for apps that mint refresh tokens (SurfSense, Twenty, Outline OAuth-provider role)
@@ -68,10 +69,11 @@ The first three rows together cover Threat 1 in `RULES.md` §4 (external header 
 | 14 | logout shape (1-layer, no `/oauth2/sign_out`, portal-host regex) | `<status>` | logout file checked; on ❌ flag any re-introduction of `/oauth2/sign_out`, the loose `^[^.]*\.` regex without an `origin` fallback, or a target that isn't the portal host |
 | 15 | identity-managed UI hidden under SSO | `<status>` | gates checked: signin/signup, password change/reset, email change, 2FA enforcement toggle, 2FA TOTP setup. Each one must hide or hard-redirect — partial gating leaves the user a path to lock themselves out |
 | 16 | compose hygiene (no bare `docker compose`) | `<status>` | on ❌ flag scripts/Makefile invoking compose without `COMPOSE_FILE` + `--no-deps` |
+| 17 | global HTTP→HTTPS redirect at Traefik entrypoint | `<status>` | grep the Traefik `command:` block for `--entrypoints.web.http.redirections.entryPoint.to=websecure`; on ❌ flag the missing flag (env-var form `TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_*` does NOT count — Traefik 3.x silently drops it) and any per-app `entrypoints=web` router that serves content without a `redirectScheme` middleware |
 
 End the table with one of:
 - `**All invariants hold.**` — every row is ✅ or `n/a`
-- `**N violations.**` followed by a single sentence calling out the most load-bearing fix first (the one that re-exposes auth bypass, leaks user data, or breaks the next deploy). Rows 1–6 and 12 are the security-critical ones — flag any failure there ahead of the operational rows.
+- `**N violations.**` followed by a single sentence calling out the most load-bearing fix first (the one that re-exposes auth bypass, leaks user data, or breaks the next deploy). Rows 1–7 and 12 and 17 are the security-critical ones — flag any failure there ahead of the operational rows.
 
 ## What this skill is NOT
 - Not a runtime health check — that's a separate `/review`-style skill.

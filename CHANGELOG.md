@@ -2,6 +2,19 @@
 
 All notable changes to the sso-rules plugin land here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [SemVer](https://semver.org/) — bumps reflect compatibility of the report shape and the canonical rule set, not the underlying devstack.
 
+## [0.6.0] — 2026-05-04
+
+### Added
+- **Row 17: global HTTP→HTTPS redirect at Traefik entrypoint** — security-critical row. Fails CI when the Traefik `command:` block doesn't carry `--entrypoints.web.http.redirections.entryPoint.to=websecure`. Crucially, also fails when the env-var form (`TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_ENTRYPOINT_TO`) is used — Traefik 3.x silently ignores it, so deployers can have it set in compose and still serve plaintext on :80.
+- `RULES.md` §1 **No plaintext HTTP routes** subsection — codifies the entrypoint-redirect requirement, the env-var-form footgun, and the ACME HTTP-01 exception (Traefik auto-routes the challenge with higher priority than the redirect).
+
+### Why
+Verified live on prod 2026-05-04: every per-app HTTP route (foss-pm, foss-docs, foss-design, foss-research, foss landing) returned 200 over plaintext with no redirect. The deploy had `HTTPS_REDIRECT_TARGET=websecure` set in `.env` and threaded into Traefik via env vars, but Traefik 3.6.12 silently ignored the env-var path (verified by inspecting the static-config dump in `docker logs traefik` — the `web` entrypoint had no `redirections` key at all).
+
+This is the same shape as the 2026-04-30 Electric `/v1/shape` exfil — HTTPS sibling gated by `mpass-auth`, HTTP twin lacking middlewares — but generalized to every per-app HTTP router. Anyone hitting port 80 without HSTS state (curl, mobile WebView, first-time visitor, bot) sees the SPA in plaintext, posts login forms over plaintext, and transmits non-`Secure` cookies unencrypted.
+
+Row 17 catches both missing-redirect and broken-env-var-redirect deployments deterministically. Pairs with the fix in [foss-server-bundle-devstack#38](https://github.com/Pressingly/foss-server-bundle-devstack/pull/38) and [foss-server-bundle#18](https://github.com/Pressingly/foss-server-bundle/pull/18).
+
 ## [0.5.0] — 2026-04-30
 
 ### Added

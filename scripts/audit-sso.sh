@@ -8,12 +8,13 @@
 #
 # Exit codes:
 #   0 — all checks pass (every row ✅ or n/a / manual)
-#   1 — at least one security-critical row failed (rows 1-7, 12). These
-#       are the rows whose breakage opens an auth-bypass or cookie path.
-#       Operational rows (TTL wiring, valkey cascade, compose hygiene)
-#       still produce ❌ in the table but don't block CI by default.
+#   1 — at least one security-critical row failed (rows 1-7, 12, 17).
+#       These are the rows whose breakage opens an auth-bypass, leaks
+#       data over plaintext, or opens a cookie path. Operational rows
+#       (TTL wiring, valkey cascade, compose hygiene) still produce ❌
+#       in the table but don't block CI by default.
 #
-# Output: a 16-row markdown table on stdout matching the shape in
+# Output: a 17-row markdown table on stdout matching the shape in
 # https://github.com/awais786/sso-rules → SKILL.md §5.
 #
 # Coverage: 11 rows fully deterministic; 5 rows (3 path-discipline,
@@ -33,9 +34,9 @@ declare -a ROW_STATUS    # ✅ / ❌ / n/a / ?
 declare -a ROW_NOTES
 declare -i SECURITY_CRITICAL_FAILS=0
 
-# Security-critical rows per RULES.md §4 (1-7 + 12). A ❌ in any of these
+# Security-critical rows per RULES.md §4 (1-7, 12, 17). A ❌ in any of these
 # fails CI. Other rows produce ❌ but are advisory.
-SECURITY_CRITICAL=(0 1 2 3 4 5 6 11)   # zero-indexed
+SECURITY_CRITICAL=(0 1 2 3 4 5 6 11 16)   # zero-indexed
 
 record() {
   local idx=$1 status=$2 note=$3
@@ -426,6 +427,35 @@ check_row_16() {
   fi
 }
 
+# =============================================================================
+# Row 17: global HTTP→HTTPS redirect at Traefik entrypoint
+# =============================================================================
+# Traefik 3.x silently ignores the env-var form of the redirect
+# (TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_*) — only the CLI flag form
+# on the Traefik `command:` block actually configures the redirect. Without
+# this, every per-app HTTP router on `entrypoints=web` serves plaintext on
+# :80 with no auth middlewares — same shape as the 2026-04-30 Electric
+# /v1/shape exfil, but on the main `/` path of any app.
+check_row_17() {
+  if [[ ! -f "$COMPOSE" ]]; then
+    record 16 "?" "compose file not found at $COMPOSE — set COMPOSE=path/to/docker-compose.yml"
+    return
+  fi
+  # CLI flag form on the Traefik command:
+  #   --entrypoints.web.http.redirections.entryPoint.to=websecure
+  if grep -qE -- '--entrypoints\.web\.http\.redirections\.entryPoint\.to=websecure' "$COMPOSE"; then
+    record 16 "✅" "Traefik command contains \`--entrypoints.web.http.redirections.entryPoint.to=websecure\` — global HTTP→HTTPS redirect active"
+    return
+  fi
+  # Env-var form is silently ignored by Traefik 3.x; flag it as a violation
+  # even when present, since deployers may believe it's working.
+  if grep -qE 'TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_ENTRYPOINT_TO' "$COMPOSE"; then
+    record 16 "❌" "Traefik command uses the env-var form (TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_ENTRYPOINT_TO=…) which Traefik 3.x silently ignores. Replace with CLI flag: \`--entrypoints.web.http.redirections.entryPoint.to=websecure\` and \`.scheme=https\`"
+    return
+  fi
+  record 16 "❌" "No global HTTP→HTTPS redirect on Traefik. Add \`--entrypoints.web.http.redirections.entryPoint.to=websecure\` and \`.scheme=https\` to the Traefik \`command:\` block. Without it, every per-app HTTP router on :80 serves plaintext."
+}
+
 # ---- run all checks ----
 check_row_1
 check_row_2
@@ -443,6 +473,7 @@ check_row_13
 check_row_14
 check_row_15
 check_row_16
+check_row_17
 
 # ---- print table ----
 ROW_TITLES=(
@@ -462,6 +493,7 @@ ROW_TITLES=(
   "logout shape (1-layer, no /oauth2/sign_out)"
   "identity-managed UI hidden under SSO"
   "compose hygiene (no bare docker compose)"
+  "global HTTP→HTTPS redirect at Traefik entrypoint"
 )
 
 echo "## SSO Invariants Audit"
@@ -484,7 +516,7 @@ if [[ "$TOTAL_FAILS" -eq 0 ]]; then
   echo "**All deterministic invariants hold.** 5 rows (3 path discipline, 6 backend AUTH_TYPE gate, 12 cookie flags, 14 logout regex, 15 identity UI) require local \`/sso-rules:audit-all-apps\` for full coverage."
   exit 0
 else
-  echo "**$TOTAL_FAILS violations.** Security-critical (rows 1-7, 12): $SECURITY_CRITICAL_FAILS."
+  echo "**$TOTAL_FAILS violations.** Security-critical (rows 1-7, 12, 17): $SECURITY_CRITICAL_FAILS."
   if [[ "$SECURITY_CRITICAL_FAILS" -gt 0 ]]; then
     exit 1
   fi
