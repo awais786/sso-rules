@@ -29,8 +29,8 @@ For every diff in scope (compose, Traefik labels, fork code), verify:
 - **TLS** uses `tls=true` only — never `tls.certresolver=letsencrypt`
 - **No plaintext HTTP** — Traefik command includes `--entrypoints.web.http.redirections.entryPoint.to=websecure` (CLI flag form; env-var form is silently ignored on Traefik 3.x). No per-app HTTP router serves content without a redirect; ACME HTTP-01 challenge is the only allowed exception
 - **Build pattern** is consistent: Pattern A (interpreted) gets volume mounts; Pattern B (compiled) gets placeholder tokens (`__NEXT_PUBLIC_FOO__`), not real values, baked into the image
-- **Session access TTL** wires `SESSION_TTL_SECONDS` or `SESSION_TTL_DURATION` into the app's native config (Django `SESSION_COOKIE_AGE`, Penpot `:auth-token-cookie-max-age`, oauth2-proxy `OAUTH2_PROXY_COOKIE_EXPIRE`, FastAPI `ACCESS_TOKEN_LIFETIME_SECONDS`, Twenty `ACCESS_TOKEN_EXPIRES_IN`, Outline JWT cookie via fork patch)
-- **Refresh TTL** wires `SESSION_REFRESH_TTL_SECONDS` / `SESSION_REFRESH_TTL_DURATION` for apps that mint refresh tokens (SurfSense, Twenty, Outline OAuth-provider role)
+- **Session access TTL** wires `SESSION_COOKIE_MAX_AGE_SECONDS` into the app's native config (Django `SESSION_COOKIE_AGE`, Penpot `:auth-token-cookie-max-age`, oauth2-proxy `OAUTH2_PROXY_COOKIE_EXPIRE`, FastAPI `ACCESS_TOKEN_LIFETIME_SECONDS`, Twenty `ACCESS_TOKEN_EXPIRES_IN`, Outline JWT cookie via fork patch — Twenty/oauth2-proxy/Penpot consume `${VAR}s` for duration format)
+- **Refresh TTL** wires `SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS` for apps that mint refresh tokens (SurfSense, Twenty, Outline OAuth-provider role)
 - **Sliding-refresh** wires `SESSION_COOKIE_REFRESH_SECONDS` for oauth2-proxy + Penpot so active sessions never hit the access ceiling
 - **Valkey consumers** declare `depends_on: valkey: { restart: true }` (sessions cascade on Valkey recreate)
 - **Logout** clears app session + reads the **required** `SMB_NAME` env (no per-app default — crash loudly if unset) and rewrites the host: `hostname.replace(/^[^.]*\./, ` + `${smbName}.` + `)`. Container env name is always `SMB_NAME`; only the *exposure* mechanism varies per stack (Vite `define`, Next.js placeholder substitution, Outline `@Public` decorator, Twenty `generateFrontConfig`, Penpot `nginx-entrypoint.sh`). Hardcoded prefixes are forbidden — they silently break when the deployment moves domains
@@ -61,8 +61,8 @@ The first three rows together cover Threat 1 in `RULES.md` §4 (external header 
 | 6 | backend refuses identity headers when AUTH_TYPE≠SSO | `<status>` | grep the backend SSO middleware/controller for the early-return / 404 on the header-trust gate |
 | 7 | TLS = mkcert (no certresolver) | `<status>` | on ❌ flag any `tls.certresolver=letsencrypt` |
 | 8 | build pattern correctness | `<status>` | A vs B (and B1 vs B2) called out; on ❌ flag real values baked into a B image or source volume-mounted into a compiled container |
-| 9 | session TTL wired (`SESSION_TTL_SECONDS`/`SESSION_TTL_DURATION`) | `<status>` | service(s) checked; on ❌ list apps not consuming the canonical envs |
-| 10 | refresh TTL wired (`SESSION_REFRESH_TTL_*`) | `<status>` | only refresh-token apps (SurfSense, Twenty, Outline OAuth provider) — use `n/a` for apps that don't mint refresh tokens |
+| 9 | session TTL wired (`SESSION_COOKIE_MAX_AGE_SECONDS`) | `<status>` | service(s) checked; on ❌ list apps not consuming the canonical env |
+| 10 | refresh TTL wired (`SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS`) | `<status>` | only refresh-token apps (SurfSense, Twenty, Outline OAuth provider) — use `n/a` for apps that don't mint refresh tokens |
 | 11 | sliding-refresh (`SESSION_COOKIE_REFRESH_SECONDS`) wired | `<status>` | oauth2-proxy + Penpot only — use `n/a` for everything else |
 | 12 | cookie security flags (`secure` derives from SERVER_URL https; `sameSite: 'lax'`; `httpOnly` correct for cookie's role) | `<status>` | every `res.cookie(...)` / `Set-Cookie` site checked; on ❌ flag any hardcoded `secure: true` / `secure: false` (breaks dev / breaks prod), missing `sameSite`, or `httpOnly: false` on a long-lived cookie |
 | 13 | valkey cascade declared | `<status>` | on ❌ list services missing `depends_on: valkey: { restart: true }` |

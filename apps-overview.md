@@ -31,7 +31,7 @@ How each app reads `X-Auth-Request-Email` from oauth2-proxy and turns it into an
 | App | Where the header is consumed | What it issues |
 |-----|------------------------------|----------------|
 | Plane | `apps/api/plane/middleware/proxy_auth.py` — Django ProxyAuthMiddleware | Django session cookie (`SESSION_COOKIE_AGE`) |
-| Outline | `server/middlewares/authentication.ts` — FORWARDAUTH_SERVICE branch inside the existing auth middleware | JWT cookie (`accessToken`) — fork patch reads `SESSION_TTL_SECONDS` |
+| Outline | `server/middlewares/authentication.ts` — FORWARDAUTH_SERVICE branch inside the existing auth middleware | JWT cookie (`accessToken`) — fork patch reads `env.SESSION_TTL_SECONDS` (consumer name; sourced from `SESSION_COOKIE_MAX_AGE_SECONDS` in compose) |
 | Penpot | `backend/src/app/http/auth_request.clj` — Reitit RPC middleware (header read as fallback after session + access-token) | Penpot auth-token cookie (`PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE`) |
 | SurfSense | `surfsense_backend/app/...` — dedicated `GET /auth/jwt/proxy-login` endpoint, cookie handoff (60s short-lived cookies → SPA reads them, stores JWT in localStorage, clears cookies) | JWT (access + refresh), localStorage-stored |
 | Twenty | `packages/twenty-server/src/engine/core-modules/auth/controllers/sso-proxy-login.controller.ts` — standalone NestJS controller `GET /auth/sso/proxy-login`, no Passport ceremony | `tokenPair` cookie (access JWT + refresh JWT, JSON-encoded) — Jotai reads it |
@@ -52,21 +52,21 @@ When `AUTH_TYPE=SSO`, each app's SPA hides login / password / email-change UI so
 
 Canonical envs in `.env`:
 ```
-SESSION_TTL_SECONDS=28800              # 8h — access cookie / app session
-SESSION_TTL_DURATION=8h                # same window, duration string
-SESSION_REFRESH_TTL_SECONDS=57600      # 16h — refresh token (>= access)
-SESSION_REFRESH_TTL_DURATION=16h       # same window, duration string
-SESSION_COOKIE_REFRESH_SECONDS=3600    # 1h — sliding refresh interval
+SESSION_COOKIE_MAX_AGE_SECONDS=604800       # 7d — access cookie / app session
+SESSION_COOKIE_REFRESH_SECONDS=3600         # 1h — sliding-refresh interval (must be < max-age)
+SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS=1209600  # 14d — refresh token (>= max-age)
 ```
+
+Apps that need a duration-string format consume `${VAR}s` — compose appends the `s` suffix; both Go (`time.Duration`) and NestJS (`ms()`) accept it. No separate `_DURATION` envs.
 
 | App | Native env consumed | Type |
 |-----|---------------------|------|
-| Plane | `SESSION_COOKIE_AGE` ← `SESSION_TTL_SECONDS` | Access only |
-| Outline | `SESSION_TTL_SECONDS` (raw, fork patch reads it) + `OAUTH_PROVIDER_*_LIFETIME` | Access (cookie) + refresh (when acting as OAuth provider) |
-| Penpot | `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE` ← `SESSION_TTL_SECONDS`, `PENPOT_AUTH_TOKEN_COOKIE_RENEWAL_MAX_AGE` ← `SESSION_COOKIE_REFRESH_SECONDS` | Access + sliding refresh |
-| SurfSense | `ACCESS_TOKEN_LIFETIME_SECONDS` ← `SESSION_TTL_SECONDS`, `REFRESH_TOKEN_LIFETIME_SECONDS` ← `SESSION_REFRESH_TTL_SECONDS` | Access + refresh |
-| Twenty | `ACCESS_TOKEN_EXPIRES_IN` ← `SESSION_TTL_DURATION`, `REFRESH_TOKEN_EXPIRES_IN` ← `SESSION_REFRESH_TTL_DURATION` (cookie maxAge tracks **refresh**, not access) | Access + refresh |
-| oauth2-proxy | `OAUTH2_PROXY_COOKIE_EXPIRE` ← `SESSION_TTL_SECONDS`, `OAUTH2_PROXY_COOKIE_REFRESH` ← `SESSION_COOKIE_REFRESH_SECONDS` | Access + sliding refresh |
+| Plane | `SESSION_COOKIE_AGE` ← `SESSION_COOKIE_MAX_AGE_SECONDS` | Access only |
+| Outline | `SESSION_TTL_SECONDS` ← `SESSION_COOKIE_MAX_AGE_SECONDS` (consumer name fixed by fork patch) + `OAUTH_PROVIDER_*_LIFETIME` | Access (cookie) + refresh (when acting as OAuth provider) |
+| Penpot | `PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE` ← `SESSION_COOKIE_MAX_AGE_SECONDS`, `PENPOT_AUTH_TOKEN_COOKIE_RENEWAL_MAX_AGE` ← `SESSION_COOKIE_REFRESH_SECONDS` | Access + sliding refresh |
+| SurfSense | `ACCESS_TOKEN_LIFETIME_SECONDS` ← `SESSION_COOKIE_MAX_AGE_SECONDS`, `REFRESH_TOKEN_LIFETIME_SECONDS` ← `SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS` | Access + refresh |
+| Twenty | `ACCESS_TOKEN_EXPIRES_IN` ← `${SESSION_COOKIE_MAX_AGE_SECONDS}s`, `REFRESH_TOKEN_EXPIRES_IN` ← `${SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS}s` (cookie maxAge tracks **refresh**, not access) | Access + refresh |
+| oauth2-proxy | `OAUTH2_PROXY_COOKIE_EXPIRE` ← `SESSION_COOKIE_MAX_AGE_SECONDS`, `OAUTH2_PROXY_COOKIE_REFRESH` ← `SESSION_COOKIE_REFRESH_SECONDS` | Access + sliding refresh |
 
 ## Bypass routers (Traefik)
 

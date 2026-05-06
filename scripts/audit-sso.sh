@@ -275,18 +275,18 @@ check_row_8() {
 }
 
 # =============================================================================
-# Row 9: session TTL wired (SESSION_TTL_SECONDS / SESSION_TTL_DURATION)
+# Row 9: session TTL wired (SESSION_COOKIE_MAX_AGE_SECONDS)
 # =============================================================================
 check_row_9() {
   local missing=()
-  grep -q 'SESSION_COOKIE_AGE: \${SESSION_TTL_SECONDS' "$COMPOSE" || missing+=("plane SESSION_COOKIE_AGE")
-  grep -q 'ACCESS_TOKEN_LIFETIME_SECONDS: \${SESSION_TTL_SECONDS' "$COMPOSE" || missing+=("surfsense ACCESS_TOKEN_LIFETIME_SECONDS")
-  grep -q 'PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE: \${SESSION_TTL_SECONDS' "$COMPOSE" || missing+=("penpot PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE")
-  grep -q 'OAUTH2_PROXY_COOKIE_EXPIRE: \${SESSION_TTL_SECONDS' "$COMPOSE" || missing+=("oauth2-proxy OAUTH2_PROXY_COOKIE_EXPIRE")
-  grep -q 'ACCESS_TOKEN_EXPIRES_IN: \${SESSION_TTL_DURATION' "$COMPOSE" || missing+=("twenty ACCESS_TOKEN_EXPIRES_IN")
-  grep -q 'SESSION_TTL_SECONDS: \${SESSION_TTL_SECONDS' "$COMPOSE" || missing+=("outline SESSION_TTL_SECONDS")
+  grep -q 'SESSION_COOKIE_AGE: \${SESSION_COOKIE_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("plane SESSION_COOKIE_AGE")
+  grep -q 'ACCESS_TOKEN_LIFETIME_SECONDS: \${SESSION_COOKIE_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("surfsense ACCESS_TOKEN_LIFETIME_SECONDS")
+  grep -q 'PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE: \${SESSION_COOKIE_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("penpot PENPOT_AUTH_TOKEN_COOKIE_MAX_AGE")
+  grep -q 'OAUTH2_PROXY_COOKIE_EXPIRE: \${SESSION_COOKIE_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("oauth2-proxy OAUTH2_PROXY_COOKIE_EXPIRE")
+  grep -q 'ACCESS_TOKEN_EXPIRES_IN: \${SESSION_COOKIE_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("twenty ACCESS_TOKEN_EXPIRES_IN")
+  grep -q 'SESSION_TTL_SECONDS: \${SESSION_COOKIE_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("outline SESSION_TTL_SECONDS")
   if [[ ${#missing[@]} -eq 0 ]]; then
-    record 8 "✅" "All 6 session-issuing services wire SESSION_TTL_SECONDS / SESSION_TTL_DURATION"
+    record 8 "✅" "All 6 session-issuing services wire SESSION_COOKIE_MAX_AGE_SECONDS"
   else
     record 8 "❌" "Services not consuming canonical TTL env: ${missing[*]}. Fix: rename compose interpolation"
   fi
@@ -297,9 +297,9 @@ check_row_9() {
 # =============================================================================
 check_row_10() {
   local missing=()
-  grep -q 'REFRESH_TOKEN_LIFETIME_SECONDS: \${SESSION_REFRESH_TTL_SECONDS' "$COMPOSE" || missing+=("surfsense")
-  grep -q 'REFRESH_TOKEN_EXPIRES_IN: \${SESSION_REFRESH_TTL_DURATION' "$COMPOSE" || missing+=("twenty")
-  grep -q 'OAUTH_PROVIDER_REFRESH_TOKEN_LIFETIME: \${SESSION_REFRESH_TTL_SECONDS' "$COMPOSE" || missing+=("outline-oauth-provider")
+  grep -q 'REFRESH_TOKEN_LIFETIME_SECONDS: \${SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("surfsense")
+  grep -q 'REFRESH_TOKEN_EXPIRES_IN: \${SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("twenty")
+  grep -q 'OAUTH_PROVIDER_REFRESH_TOKEN_LIFETIME: \${SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS' "$COMPOSE" || missing+=("outline-oauth-provider")
   if [[ ${#missing[@]} -eq 0 ]]; then
     record 9 "✅" "Refresh TTL wired on SurfSense, Twenty, Outline OAuth provider. Plane / Penpot / oauth2-proxy: n/a"
   else
@@ -485,8 +485,8 @@ ROW_TITLES=(
   "backend refuses identity headers when AUTH_TYPE≠SSO"
   "TLS = mkcert (no certresolver)"
   "build pattern correctness"
-  "session TTL wired (SESSION_TTL_*)"
-  "refresh TTL wired (SESSION_REFRESH_TTL_*)"
+  "session TTL wired (SESSION_COOKIE_MAX_AGE_SECONDS)"
+  "refresh TTL wired (SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS)"
   "sliding-refresh wired"
   "cookie security flags"
   "valkey cascade declared"

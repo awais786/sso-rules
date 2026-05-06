@@ -2,6 +2,21 @@
 
 All notable changes to the sso-rules plugin land here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [SemVer](https://semver.org/) — bumps reflect compatibility of the report shape and the canonical rule set, not the underlying devstack.
 
+## [0.7.0] — 2026-05-05
+
+### Changed
+- **`RULES.md` §1 Session TTL** — canonical contract rolled back to the **three-env shape** that matches what's deployed: `SESSION_COOKIE_MAX_AGE_SECONDS`, `SESSION_COOKIE_REFRESH_SECONDS`, `SESSION_REFRESH_TOKEN_MAX_AGE_SECONDS`. Defaults restored to `604800 / 3600 / 1209600`.
+- Dropped the `_DURATION` siblings entirely. Apps that need a duration-string format (Twenty NestJS `ms()`, oauth2-proxy / Penpot Go `time.Duration`) consume `${VAR}s` — compose appends the `s` suffix; both parsers accept it. One source var per horizon, no dual format.
+- **`scripts/audit-sso.sh`** rows 9-10 grep patterns updated to the old names. Row 11 (sliding refresh, `SESSION_COOKIE_REFRESH_SECONDS`) unchanged.
+- **`apps-overview.md`** §"Session TTL wiring" — table updated. Outline row clarified: consumer env name stays `SESSION_TTL_SECONDS` because the fork patch reads `env.SESSION_TTL_SECONDS` literally; only the interpolation source changes.
+- **`SKILL.md`** rows 9-10 + section "session access TTL" / "Refresh TTL" — updated to old names.
+- **`README.md`** issue-table rows 9 + 11 — updated to old names.
+
+### Why
+The four-env (`SESSION_TTL_SECONDS` + `SESSION_TTL_DURATION` ×2) shape introduced in v0.3.0 never aligned with the operator-side `.env` files actually deployed in production foss-server-bundle, which still used the original `SESSION_COOKIE_MAX_AGE_SECONDS` names. The rename PR ([foss-server-bundle-devstack#33](https://github.com/Pressingly/foss-server-bundle-devstack/pull/33)) was reverted because pushing the new names would have required a `.env` migration on every deploy. Easier to roll the contract back to the names already in use, and use `${VAR}s` for the duration-format consumers.
+
+Pairs with [foss-server-bundle-devstack#XX](https://github.com/Pressingly/foss-server-bundle-devstack) (add 2 missing wirings only) and [foss-server-bundle#XX](https://github.com/Pressingly/foss-server-bundle) (counter-rename + 2 wirings).
+
 ## [0.6.0] — 2026-05-04
 
 ### Added
