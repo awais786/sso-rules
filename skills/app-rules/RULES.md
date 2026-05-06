@@ -83,14 +83,20 @@ Pick A vs B (and B1 vs B2) before writing the Dockerfile. Don't volume-mount sou
   - **Twenty (NestJS):** `ACCESS_TOKEN_EXPIRES_IN = ${SESSION_TTL_DURATION}`, `REFRESH_TOKEN_EXPIRES_IN = ${SESSION_REFRESH_TTL_DURATION}` — also drives the SSO cookie maxAge (refresh, not access).
 
 ### Logout
-- Every SPA logout: clear app session (server-side endpoint) → clear client state (localStorage, mobx, IndexedDB) → top-level navigate to portal host:
+- Every SPA logout: clear app session (server-side endpoint) → clear client state (localStorage, mobx, IndexedDB) → top-level navigate to portal host. The portal-host prefix is **driven by the `SMB_NAME` env var**, not hardcoded:
   ```js
-  window.location.hostname.replace(/^[^.]*\./, "foss.")
-  // foss-pm.local.moneta.dev → foss.local.moneta.dev
+  const smbName = process.env.SMB_NAME.trim();              // build-time-exposed (Plane Vite, SurfSense Next.js)
+  // or: const smbName = window._env_.SMB_NAME.trim();      // runtime-injected (Twenty)
+  // or: const smbName = env.SMB_NAME.trim();               // server-presented @Public env (Outline)
+  // or: (def smb-name (obj/get global "penpotSmbName"))    // nginx-substituted config.js (Penpot)
+  const portalHost = window.location.hostname.replace(/^[^.]*\./, `${smbName}.`);
+  // <smb>-pm.local.moneta.dev → <smb>.local.moneta.dev
   ```
+- `SMB_NAME` is **required** — no per-app default. If unset the SPA crashes loudly at logout instead of silently redirecting to the wrong host (e.g. landing on `foss.<domain>` after a deployment moved to `moneta.<domain>`). Set it once in compose / deploy env; every app container reads the same value.
+- The container env name is **always** `SMB_NAME`. Per-app frontend pattern adapts only the *exposure* mechanism (Vite `define`, Next.js placeholder substitution via `docker-entrypoint.js`, Outline `@Public` decorator, Twenty `generateFrontConfig`, Penpot `nginx-entrypoint.sh`).
 - Current state: 1-layer (app session only). `_oauth2_proxy` and Cognito cookies survive. Trade-off documented in CLAUDE.md.
 - Restoring 3-layer requires Cognito hosted `/logout` and the steps in CLAUDE.md "Logout simplification — 2026-04-17".
-- Regex caveat: `^[^.]*\.` rewrites any first label. Tighten to `^foss-[^.]+\.` with `origin` fallback if deploying outside the `foss-*` naming scheme.
+- Regex caveat: `^[^.]*\.` rewrites any first label. The `${smbName}.` interpolation depends on the host actually following the `<smb>-<app>.<domain>` shape — confirm this in any new deployment.
 
 ### Identity-managed fields
 In SSO mode, email + password are owned by Cognito. Hide or hard-disable:
@@ -194,7 +200,7 @@ When introducing a 5th (or Nth) app, work through this list. Each item is requir
    - `<name>-secure` router with full host rule, `priority=1`, middlewares `strip-auth-headers@docker, mpass-auth@docker`
    - Bypass routers at `priority=20+` for static / health / webhooks. Justify each path against the bypass discipline.
 7. **Backend identity reading.** `X-Auth-Request-Email` first, `X-Auth-Request-User` fallback, synthesize `{user}@${SMB_NAME}.com` if no `@`.
-8. **Logout.** Implement the 1-layer shape: app endpoint clears session → SPA clears client state → navigate to `hostname.replace(/^[^.]*\./, "foss.")`.
+8. **Logout.** Implement the 1-layer shape: app endpoint clears session → SPA clears client state → read **required** `SMB_NAME` env (no default) → navigate to `hostname.replace(/^[^.]*\./, ` + `${smbName}.` + `)`. Container env name is `SMB_NAME` — adapt only the exposure mechanism to the app's stack.
 9. **Hide local auth UI.** Login/register/forgot-password/email-change/password-change. SSO mode owns identity.
 10. **Smoke test.** Add `docs/<name>-smoke-test.md` covering: SSO redirect, JWT/session issuance, app-API call with `X-Auth-Request-Email`, logout → portal, re-auth round-trip.
 
@@ -290,7 +296,7 @@ Symptoms and first-check (full table in CLAUDE.md):
 | Compiled app using wrong URL | Image was Pattern B but built with hardcoded values, not placeholders |
 | Stuck at `/auth/jwt/proxy-login` (SurfSense) | Backend bind mount missing — check `/app` not `/code` |
 | User logged in after logout | Expected since 2026-04-17 (1-layer). For 3-layer see CLAUDE.md. |
-| Logout lands on wrong host | Hostname regex wrong for non-`foss-*` deployments — tighten to `^foss-[^.]+\.` |
+| Logout lands on wrong host | `SMB_NAME` env unset or wrong on the app container — required, no default, must match the deployment's actual portal-host prefix |
 | `tls.certresolver=letsencrypt` errors | Remove — devstack uses mkcert |
 | All apps down | oauth2-proxy crash-looping (DNS to Cognito OIDC discovery) |
 | Streaming chat / SSE hangs after token TTL | Frontend using raw `fetch()` instead of `authenticatedFetch` — stream never closes when JWT expires |
