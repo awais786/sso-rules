@@ -83,14 +83,39 @@ Pick A vs B (and B1 vs B2) before writing the Dockerfile. Don't volume-mount sou
   - **Twenty (NestJS):** `ACCESS_TOKEN_EXPIRES_IN = ${SESSION_TTL_DURATION}`, `REFRESH_TOKEN_EXPIRES_IN = ${SESSION_REFRESH_TTL_DURATION}` — also drives the SSO cookie maxAge (refresh, not access).
 
 ### Logout
-- Every SPA logout: clear app session (server-side endpoint) → clear client state (localStorage, mobx, IndexedDB) → top-level navigate to portal host:
+- Every SPA logout: clear app session (server-side endpoint) → clear client state (localStorage, mobx, IndexedDB) → top-level navigate to portal host.
+- Two deployment shapes are in production. The portal-host derivation must work for whichever shape the app is deployed to:
+
+  | Shape | Example app host | Portal host |
+  |-------|------------------|-------------|
+  | **4-label** `<app>.<smb>.<domain>` | `twenty.foss.arbisoft.com` | `foss.arbisoft.com` |
+  | **3-label** `<app>-<smb>.<domain>` (legacy local devstack) | `foss-twenty.local.moneta.dev` | `foss.local.moneta.dev` |
+
+- **Canonical regex (4-label sandbox + prod):**
   ```js
-  window.location.hostname.replace(/^[^.]*\./, "foss.")
-  // foss-pm.local.moneta.dev → foss.local.moneta.dev
+  window.location.hostname.replace(/^[^.]+\.(?=[^.]*\.[^.]*\.)/, "")
+  // twenty.foss.arbisoft.com → foss.arbisoft.com
   ```
+  The lookahead requires ≥2 trailing labels with dots, so single-label (`localhost`) and 2-label (`foo.example.com`) hosts no-op safely.
+- **Does not cover the 3-label legacy local-devstack shape.** On `foss-twenty.local.moneta.dev` it strips to `local.moneta.dev` (missing the `foss.` prefix). If you need one image to work for both shapes, use the env-var path below instead.
+- **Durable fix — read the deployer-supplied URL** (SurfSense PR #17 reference impl, `surfsense_web/lib/auth-utils.ts`):
+  ```js
+  const url = process.env.NEXT_PUBLIC_LOGOUT_REDIRECT_URL; // or VITE_*, REACT_APP_*
+  if (!url) { console.error("..."); return false; }
+  window.location.href = url;
+  ```
+  Compose env is already wired: `NEXT_PUBLIC_LOGOUT_REDIRECT_URL=${PLATFORM_PROTOCOL}://${SMB_NAME}.${PLATFORM_DOMAIN}` (and per-fork equivalents — `VITE_LOGOUT_REDIRECT_URL` for Plane, `REACT_APP_LOGOUT_REDIRECT_URL` for Twenty). Build pipeline in devstack `Makefile` (`dev.build.surfsense.web` line 635, `dev.build.plane.web` line 550) passes the matching `--build-arg`. New forks **MUST** consume the env, not regex-derive.
+- Per-fork status (verified ground truth):
+  | Fork | File | Approach | Works for |
+  |------|------|----------|-----------|
+  | Plane | `apps/web/core/store/user/index.ts` | regex (4-label) | sandbox + prod |
+  | Outline | `app/stores/AuthStore.ts` | regex (4-label) | sandbox + prod |
+  | Penpot | `frontend/src/app/main/data/auth.cljs` | regex (4-label) | sandbox + prod |
+  | SurfSense | `surfsense_web/lib/auth-utils.ts` | regex (4-label); env-var migration in flight (Pressingly/SurfSense#17) | sandbox + prod |
+  | Twenty | `packages/twenty-front/src/modules/auth/utils/buildPortalUrl.ts` | regex (4-label) — Pressingly/twenty#6 | sandbox + prod |
 - Current state: 1-layer (app session only). `_oauth2_proxy` and Cognito cookies survive. Trade-off documented in CLAUDE.md.
 - Restoring 3-layer requires Cognito hosted `/logout` and the steps in CLAUDE.md "Logout simplification — 2026-04-17".
-- Regex caveat: `^[^.]*\.` rewrites any first label. Tighten to `^foss-[^.]+\.` with `origin` fallback if deploying outside the `foss-*` naming scheme.
+- Port-preservation caveat: where the SPA passes a hostname-like value through to the rewriter, prefer `window.location.host` over `window.location.hostname` — `hostname` strips the port per the URL spec, breaking logout on non-standard-port deployments. Twenty's `buildPortalUrl` callsite uses `host`. Other apps may need the same treatment if ever deployed on non-standard ports.
 
 ### Identity-managed fields
 In SSO mode, email + password are owned by Cognito. Hide or hard-disable:
@@ -194,7 +219,7 @@ When introducing a 5th (or Nth) app, work through this list. Each item is requir
    - `<name>-secure` router with full host rule, `priority=1`, middlewares `strip-auth-headers@docker, mpass-auth@docker`
    - Bypass routers at `priority=20+` for static / health / webhooks. Justify each path against the bypass discipline.
 7. **Backend identity reading.** `X-Auth-Request-Email` first, `X-Auth-Request-User` fallback, synthesize `{user}@${SMB_NAME}.com` if no `@`.
-8. **Logout.** Implement the 1-layer shape: app endpoint clears session → SPA clears client state → navigate to `hostname.replace(/^[^.]*\./, "foss.")`.
+8. **Logout.** Implement the 1-layer shape: app endpoint clears session → SPA clears client state → navigate to portal host. Read the deployer-supplied URL (`process.env.NEXT_PUBLIC_LOGOUT_REDIRECT_URL` or per-fork equivalent) when possible; if the SPA must derive from hostname, use `hostname.replace(/^[^.]+\.(?=[^.]*\.[^.]*\.)/, "")` (4-label sandbox + prod shape — see §1 Logout for the full table).
 9. **Hide local auth UI.** Login/register/forgot-password/email-change/password-change. SSO mode owns identity.
 10. **Smoke test.** Add `docs/<name>-smoke-test.md` covering: SSO redirect, JWT/session issuance, app-API call with `X-Auth-Request-Email`, logout → portal, re-auth round-trip.
 
@@ -273,7 +298,7 @@ If the SPA exposes "change email" or "change password" while `AUTH_TYPE=SSO`, a 
 
 The 2026-04-17 simplification dropped the oauth2-proxy `/sign_out` hop because Cognito hosted `/logout` isn't available on this app client and the intermediate hop produces a visibly broken redirect. A future PR re-introducing `/oauth2/sign_out` would re-introduce the broken UX.
 
-**Closed by:** every app's logout target is the bare portal host (`window.location.hostname.replace(/^[^.]*\./, "foss.")`), no `/oauth2/sign_out` suffix.
+**Closed by:** every app's logout target is the bare portal host (env-supplied URL, or `window.location.hostname.replace(/^[^.]+\.(?=[^.]*\.[^.]*\.)/, "")` — see §1 Logout), with no `/oauth2/sign_out` suffix.
 
 **Verifying for an app:** grep the SPA's logout handler for the literal `oauth2/sign_out` — should not appear unless the app has explicit Cognito hosted logout config.
 
@@ -290,7 +315,7 @@ Symptoms and first-check (full table in CLAUDE.md):
 | Compiled app using wrong URL | Image was Pattern B but built with hardcoded values, not placeholders |
 | Stuck at `/auth/jwt/proxy-login` (SurfSense) | Backend bind mount missing — check `/app` not `/code` |
 | User logged in after logout | Expected since 2026-04-17 (1-layer). For 3-layer see CLAUDE.md. |
-| Logout lands on wrong host | Hostname regex wrong for non-`foss-*` deployments — tighten to `^foss-[^.]+\.` |
+| Logout lands on wrong host (e.g. `foss.foss.<domain>`) | Image was built before the 4-label-shape regex landed; rebuild + recreate the SPA container. If the deployment hostname shape isn't 4-label, switch to env-supplied URL — see §1 Logout. |
 | `tls.certresolver=letsencrypt` errors | Remove — devstack uses mkcert |
 | All apps down | oauth2-proxy crash-looping (DNS to Cognito OIDC discovery) |
 | Streaming chat / SSE hangs after token TTL | Frontend using raw `fetch()` instead of `authenticatedFetch` — stream never closes when JWT expires |
